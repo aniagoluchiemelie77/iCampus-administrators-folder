@@ -1,0 +1,13 @@
+{
+  "expo": {
+    "name": "iCampus Admin",
+    "slug": "icampus-admin",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "web": {
+      "bundler": "metro",
+      "name": "iCampus Admin"
+    }
+  }
+}
