@@ -12,6 +12,10 @@ export const TIER_COLORS: Record<string, string> = {
   enterprise: '#f5770a',
 };
 
+// Multi-series chart hues, in fixed order (validated categorical palette:
+// blue, orange, aqua, yellow). Single-series charts use the brand primary.
+// Each mode has its own steps rather than a flipped copy.
+
 const severity = {
   criticalSeverity: '#fa0000',
   highSeverity: '#f93535',
@@ -43,6 +47,11 @@ const lightPalette = {
   loginCard: '#ffffff',
   loginPatternOpacity: 1,
   shadow: '#5a3a28',
+  series1: '#2a78d6',
+  series2: '#eb6834',
+  series3: '#1baf7a',
+  series4: '#eda100',
+  gridLine: '#ece7e2',
 };
 
 const darkPalette: typeof lightPalette = {
@@ -69,6 +78,11 @@ const darkPalette: typeof lightPalette = {
   // The brand tints are bright on near-black, so the pattern is kept subtle.
   loginPatternOpacity: 0.18,
   shadow: '#000000',
+  series1: '#3987e5',
+  series2: '#d95926',
+  series3: '#199e70',
+  series4: '#c98500',
+  gridLine: '#2c2c31',
 };
 
 export type Colors = typeof lightPalette;

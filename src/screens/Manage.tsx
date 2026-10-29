@@ -16,7 +16,7 @@ import {
   saveStation,
 } from '../api';
 import { useMeasuredWidth } from '../charts';
-import { errorMessage, useNavigation, useSession, useToast } from '../context';
+import { errorMessage, isSchoolAdminA, useNavigation, useSession, useToast } from '../context';
 import { Icon } from '../icons';
 import { makeStyles, useColors } from '../theme';
 import {
@@ -210,18 +210,22 @@ export function InstitutionsList() {
   );
 }
 
-type Tier = 'free' | 'pro' | 'premium';
+type Tier = 'basic' | 'pro' | 'enterprise';
 type VerificationMethod = 'SSO' | 'EXTERNAL_API' | 'SEEDED_DATABASE' | 'EMAIL_ONLY';
 
 const PLAN_INFO: Record<Tier, { label: string; summary: string }> = {
-  free: { label: 'Basic (Free)', summary: 'Attendance overview, student identity, announcements, basic analytics.' },
+  basic: {
+    label: 'Basic',
+    summary: 'Monthly enrolment & class trends, live lectures, attendance overview, announcements. 1 institution rep + 10 department reps.',
+  },
   pro: {
     label: 'Professional (Pro)',
-    summary: '+ Tests & exam proctoring, LMS activity, attendance by department/course, lecturer activity.',
+    summary: '+ Tests & exam proctoring, LMS activity, attendance by department/course, lecturer activity. 1 institution rep + 20 department reps.',
   },
-  premium: {
-    label: 'Enterprise (Premium)',
-    summary: '+ At-risk students, department comparison, 12-week trends, integrity & security, dedicated support.',
+  enterprise: {
+    label: 'Enterprise',
+    summary:
+      '+ At-risk students, department comparison, engagement trends, lecture heatmap, integrity breakdown, dedicated support. Up to 5 institution reps, unlimited department reps.',
   },
 };
 
@@ -240,7 +244,7 @@ const emptyInstitution = {
   domainWhitelist: [] as string[],
   isOperational: false,
   verificationMethod: 'EMAIL_ONLY' as VerificationMethod,
-  tier: 'free' as Tier,
+  tier: 'basic' as Tier,
   logo: '',
   ssoConfig: { provider: 'OIDC' as 'OIDC' | 'SAML', issuerUrl: '', clientId: '', clientSecret: '' },
   externalApiConfig: { endpoint: '', sharedSecret: '', timeoutMs: 5000 },
@@ -255,7 +259,7 @@ const toInstitutionForm = (item?: Item): typeof emptyInstitution =>
         ...item,
         name: item.name || item.schoolName || '',
         domainWhitelist: Array.isArray(item.domainWhitelist) ? item.domainWhitelist : [],
-        tier: ['free', 'pro', 'premium'].includes(item.tier) ? item.tier : 'free',
+        tier: (({ free: 'basic', premium: 'enterprise' } as Record<string, Tier>)[item.tier] ?? (['basic', 'pro', 'enterprise'].includes(item.tier) ? item.tier : 'basic')) as Tier,
         ssoConfig: { ...emptyInstitution.ssoConfig, ...(item.ssoConfig || {}) },
         externalApiConfig: { ...emptyInstitution.externalApiConfig, ...(item.externalApiConfig || {}) },
       }
@@ -512,7 +516,7 @@ export function AdsList() {
 
   // Super admins manage platform ads; school administrators manage their own.
   const canManage = (ad: Item) =>
-    admin.adminType === 'super_admin' ? ad.creatorType !== 'school_administrator' : ad.addedBy === admin.uid;
+    admin.adminType === 'super_admin' ? !isSchoolAdminA(ad.creatorType) : ad.addedBy === admin.uid;
 
   const ads = list.items as AdItem[];
   const videos = ads.filter(ad => ad.type === 'video').length;
@@ -549,7 +553,7 @@ export function AdsList() {
             {cardWidth > 0
               ? ads.map(ad => {
                   const manageable = canManage(ad);
-                  const school = ad.creatorType === 'school_administrator';
+                  const school = isSchoolAdminA(ad.creatorType);
                   return (
                     <View key={String(ad.id)} style={[styles.adCard, { width: cardWidth }]}>
                       <AdCard ad={ad} playing={false} height={200} />

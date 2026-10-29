@@ -13,7 +13,7 @@ export type AdItem = {
   advertiserName: string;
   tagline?: string;
   addedBy?: string;
-  creatorType?: 'school_administrator' | 'super_admin';
+  creatorType?: 'school_admin_a' | 'school_administrator' | 'super_admin';
 };
 
 const AUTOPLAY_INTERVAL = 6000;

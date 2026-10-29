@@ -4,6 +4,8 @@ import { StatusBar } from 'expo-status-bar';
 import { AdminSession, clearSession, readSession, SESSION_EXPIRED_EVENT, writeSession } from './src/api';
 import {
   canAccess,
+  isSchoolAdmin,
+  isSchoolAdminA,
   LOG_CATEGORIES,
   NavigationProvider,
   Route,
@@ -21,6 +23,9 @@ import { AdminForm, AdminManagement } from './src/screens/Admins';
 import { Login } from './src/screens/Login';
 import { AdForm, AdsList, InstitutionForm, InstitutionsList, StationForm, StationsList, TaxEntries } from './src/screens/Manage';
 import { Overview } from './src/screens/Overview';
+import { SchoolSection } from './src/screens/SchoolSection';
+import { SchoolNotifications } from './src/screens/SchoolNotifications';
+import { RepForm, SchoolAuditLog, SchoolReps } from './src/screens/SchoolReps';
 import { AdminSearch } from './src/screens/Search';
 import { SupportChat, SupportInquiries } from './src/screens/Support';
 import { TicketDetail, TicketsSection } from './src/screens/Tickets';
@@ -37,20 +42,23 @@ const TAB_META: Record<Tab, { icon: IconName; description: string }> = {
   Subscriptions: { icon: 'verified', description: 'Subscription and plan activity.' },
   Store: { icon: 'shopping-cart', description: 'Marketplace and store activity.' },
   'Access Control': { icon: 'admin-panel-settings', description: 'Manage system administrators and team access.' },
+  Notifications: { icon: 'notifications-active', description: 'Send announcements to your students, lecturers and representatives.' },
   Institutions: { icon: 'school', description: 'Manage the iCampus network of authorized institutions.' },
   'Drop-off Stations': { icon: 'storefront', description: 'Manage authorized parcel drop-off locations.' },
   Advertisements: { icon: 'campaign', description: 'Manage iCampus advertisement banners.' },
   'Tax Entries': { icon: 'receipt-long', description: 'All recorded tax transactions and monthly reports.' },
 };
 
-function TabContent({ tab }: { tab: Tab }) {
+function TabContent({ tab, schoolAdmin }: { tab: Tab; schoolAdmin: boolean }) {
   const category = LOG_CATEGORIES[tab];
   if (category) return <ActivityLogs key={tab} category={category} label={tab} />;
   switch (tab) {
     case 'Tickets':
       return <TicketsSection />;
     case 'Access Control':
-      return <AdminManagement />;
+      return schoolAdmin ? <SchoolReps /> : <AdminManagement />;
+    case 'Notifications':
+      return <SchoolNotifications />;
     case 'Institutions':
       return <InstitutionsList />;
     case 'Drop-off Stations':
@@ -82,6 +90,12 @@ function RouteContent({ route }: { route: Route }) {
       return <StationForm item={route.item} />;
     case 'adForm':
       return <AdForm item={route.item} />;
+    case 'schoolSection':
+      return <SchoolSection section={route.section} department={route.department ?? null} filter={route.filter} />;
+    case 'repForm':
+      return <RepForm rep={route.rep} canInviteA={route.canInviteA} />;
+    case 'auditLog':
+      return <SchoolAuditLog />;
   }
 }
 
@@ -91,7 +105,7 @@ const greeting = () => {
 };
 
 /** Title block at the top of each tab. */
-function PageIntro({ tab, firstname }: { tab: Tab; firstname?: string }) {
+function PageIntro({ tab, firstname, schoolAdmin }: { tab: Tab; firstname?: string; schoolAdmin: boolean }) {
   const styles = useStyles();
   const overview = tab === 'Overview';
   return (
@@ -101,8 +115,14 @@ function PageIntro({ tab, firstname }: { tab: Tab; firstname?: string }) {
           {new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }).toUpperCase()}
         </Text>
       ) : null}
-      <Text style={styles.pageTitle}>{overview ? `${greeting()}${firstname ? `, ${firstname.split(' ')[0]}` : ''}` : tab}</Text>
-      <Text style={styles.pageDescription}>{TAB_META[tab].description}</Text>
+      <Text style={styles.pageTitle}>{overview ? `${greeting()}${firstname ? `, ${firstname.trim()}` : ''}` : tab}</Text>
+      <Text style={styles.pageDescription}>
+        {schoolAdmin && overview
+          ? "Your institution's enrolment, lectures and performance at a glance."
+          : schoolAdmin && tab === 'Access Control'
+            ? "Your institution's representatives and their access."
+            : TAB_META[tab].description}
+      </Text>
     </View>
   );
 }
@@ -137,7 +157,13 @@ function Dashboard({ session, onLogout }: { session: AdminSession; onLogout: () 
 
   const route = stack[stack.length - 1];
   const fabRight = compact ? 16 : 32;
-  const intro = <PageIntro tab={tab} firstname={admin.firstname} />;
+  const schoolAdmin = isSchoolAdmin(admin.adminType);
+  const intro = <PageIntro tab={tab} firstname={admin.firstname} schoolAdmin={schoolAdmin} />;
+  const roleLabel = isSchoolAdminA(admin.adminType)
+    ? 'Institution Representative'
+    : schoolAdmin
+      ? `Department Rep${admin.department ? ` · ${admin.department}` : ''}`
+      : formatLabel(admin.adminType);
 
   return (
     <SessionProvider value={{ admin, logout: onLogout }}>
@@ -197,7 +223,7 @@ function Dashboard({ session, onLogout }: { session: AdminSession; onLogout: () 
                   <UserAvatar profilePic={admin.profilePic} firstName={admin.firstname} lastName={admin.lastname} size={40} />
                   <View style={styles.accountText}>
                     <UserIdentity firstname={admin.firstname} lastname={admin.lastname} isVerified={admin.isVerified} showVerifyIcon size="small" />
-                    <Text numberOfLines={1} style={styles.accountRole}>{formatLabel(admin.adminType)}</Text>
+                    <Text numberOfLines={1} style={styles.accountRole}>{roleLabel}</Text>
                   </View>
                 </View>
                 <Pressable
@@ -233,7 +259,7 @@ function Dashboard({ session, onLogout }: { session: AdminSession; onLogout: () 
                 {/* The overview scrolls its intro with the page; list tabs keep it pinned above their list. */}
                 {tab === 'Overview' ? null : intro}
                 <View style={styles.flex}>
-                  {tab === 'Overview' ? <Overview header={intro} /> : <TabContent tab={tab} />}
+                  {tab === 'Overview' ? <Overview header={intro} /> : <TabContent tab={tab} schoolAdmin={schoolAdmin} />}
                 </View>
               </ScreenTransition>
             )}

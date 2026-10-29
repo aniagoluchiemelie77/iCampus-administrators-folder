@@ -7,6 +7,7 @@ import {
   Image,
   ImageStyle,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleProp,
@@ -533,6 +534,121 @@ export function SectionHeader({
   );
 }
 
+const KEY_SCROLL_STEP = 64;
+
+/**
+ * On web the page body never scrolls (the Expo reset sets overflow: hidden),
+ * so the arrow keys did nothing unless the scroller itself had focus. This
+ * sends ↑ ↓ PageUp PageDown Home End and Space to the page's main scroller,
+ * except while typing or while a dialog is open.
+ */
+const useKeyboardScroll = (ref: React.RefObject<any>) => {
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest?.('input, textarea, select, [contenteditable="true"]')) return;
+      if (event.key === ' ' && target?.closest?.('button, a, [role="button"], [role="tab"], [role="radio"], [role="switch"]')) return;
+      if (document.querySelector('[aria-modal="true"]')) return;
+      const node = (ref.current as any)?.getScrollableNode?.() as HTMLElement | undefined;
+      if (!node?.isConnected) return;
+      const page = node.clientHeight * 0.85;
+      let top: number | null = null;
+      switch (event.key) {
+        case 'ArrowDown':
+          top = node.scrollTop + KEY_SCROLL_STEP;
+          break;
+        case 'ArrowUp':
+          top = node.scrollTop - KEY_SCROLL_STEP;
+          break;
+        case 'PageDown':
+          top = node.scrollTop + page;
+          break;
+        case 'PageUp':
+          top = node.scrollTop - page;
+          break;
+        case ' ':
+          top = node.scrollTop + (event.shiftKey ? -page : page);
+          break;
+        case 'Home':
+          top = 0;
+          break;
+        case 'End':
+          top = node.scrollHeight;
+          break;
+      }
+      if (top === null) return;
+      event.preventDefault();
+      node.scrollTo({ top, behavior: event.repeat ? 'auto' : 'smooth' });
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [ref]);
+};
+
+/** A tab's main scroller: visible scrollbar and keyboard scrolling on web. */
+export function ScrollPage({
+  children,
+  style,
+  contentContainerStyle,
+}: {
+  children: React.ReactNode;
+  style?: StyleProp<ViewStyle>;
+  contentContainerStyle?: StyleProp<ViewStyle>;
+}) {
+  // Typed loosely: on web the instance also has getScrollableNode().
+  const ref = useRef<any>(null);
+  useKeyboardScroll(ref);
+  return (
+    <ScrollView ref={ref} style={[uiStyles.scrollPage, style]} contentContainerStyle={contentContainerStyle} showsVerticalScrollIndicator>
+      {children}
+    </ScrollView>
+  );
+}
+
+/** One-line row of filter chips that scrolls sideways when it overflows. */
+export function FilterChips<T extends string>({
+  options,
+  value,
+  onChange,
+  style,
+}: {
+  options: ReadonlyArray<{ value: T; label: string; count?: number }>;
+  value: T;
+  onChange: (value: T) => void;
+  style?: StyleProp<ViewStyle>;
+}) {
+  const colors = useColors();
+  return (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[uiStyles.filterRow, style]} contentContainerStyle={uiStyles.filterRowContent}>
+      {options.map(option => {
+        const active = option.value === value;
+        return (
+          <Pressable
+            key={option.value}
+            accessibilityRole="radio"
+            accessibilityState={{ selected: active }}
+            onPress={() => onChange(option.value)}
+            style={({ hovered }: any) => [
+              uiStyles.filterChip,
+              {
+                borderColor: active ? colors.primary : colors.borderSubtle,
+                backgroundColor: active ? colors.primary + '17' : hovered ? colors.primary + '0A' : colors.backgroundSecondary,
+              },
+            ]}
+          >
+            <Text style={[uiStyles.filterChipText, { color: active ? colors.primary : colors.text }]}>{option.label}</Text>
+            {option.count !== undefined ? (
+              <Text style={[uiStyles.filterChipCount, { color: active ? colors.primary : colors.textMuted }]}>{option.count}</Text>
+            ) : null}
+          </Pressable>
+        );
+      })}
+    </ScrollView>
+  );
+}
+
 /** Slide-and-fade entrance used when a screen is pushed. */
 export function ScreenTransition({ children, style }: { children: React.ReactNode; style?: StyleProp<ViewStyle> }) {
   const progress = useRef(new Animated.Value(0)).current;
@@ -899,6 +1015,12 @@ const uiStyles = StyleSheet.create({
   viewAll: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 7, paddingHorizontal: 12, borderRadius: 999 },
   viewAllText: { fontSize: 13, fontWeight: '700' },
   loading: { padding: 24, alignItems: 'center', gap: 12 },
+  scrollPage: { flex: 1 },
+  filterRow: { flexGrow: 0, flexShrink: 0, marginBottom: 16 },
+  filterRowContent: { gap: 8, alignItems: 'center' },
+  filterChip: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 7, paddingHorizontal: 14, borderRadius: 999, borderWidth: 1 },
+  filterChipText: { fontSize: 13, fontWeight: '700' },
+  filterChipCount: { fontSize: 12, fontWeight: '800' },
   loadingText: { fontSize: 14 },
   avatarFallback: { backgroundColor: PRIMARY_COLOR, alignItems: 'center', justifyContent: 'center' },
   avatarText: { color: '#fff', fontWeight: 'bold' },

@@ -6,7 +6,7 @@ import { Icon, IconName } from '../icons';
 import { makeStyles, PRIMARY_COLOR_TINT, PRIMARY_COLOR_TINT_MAIN, useColors } from '../theme';
 import { Button, Field, isValidEmail } from '../ui';
 
-const PATTERN_ICONS: IconName[] = ['auto-stories', 'shopping-cart', 'account-balance', 'diamond'];
+const PATTERN_ICONS: IconName[] = ["auto-stories", "shopping-cart"];
 
 /** The iCampus IconBackground: a faint grid of brand icons behind the card. */
 function IconBackground() {

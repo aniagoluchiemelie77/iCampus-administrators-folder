@@ -1,16 +1,32 @@
-import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
-import { Sparkline } from '../charts';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Animated, Easing, Image, StyleSheet, Text, View } from 'react-native';
+import { getAdminMetrics } from '../api';
+import { AreaChart, BarChart, Delta, Heatmap, Legend, MeterRow, RingGauge, Sparkline } from '../charts';
+import { errorMessage, isSchoolAdminA, SchoolSectionId, useNavigation, useSession, useToast } from '../context';
 import { Icon, IconName } from '../icons';
-import { PRIMARY_COLOR_TINT, PRIMARY_COLOR_TINT_MAIN, useColors } from '../theme';
-import { fromNow } from '../ui';
+import { makeStyles, useColors } from '../theme';
+import {
+  Button,
+  Card,
+  EmptyState,
+  FilterChips,
+  formatDate,
+  fromNow,
+  Loading,
+  Pill,
+  ScrollPage,
+  SectionHeader,
+  TabStrip,
+} from '../ui';
 
 /**
  * Institution analytics for school administrators, gated by the school's plan
- * (OperationalInstitutions.tier): Basic (free) → Professional (pro) →
- * Enterprise (premium). Data for a tier is only computed server-side when the
- * school has it; locked tiers show what upgrading adds.
+ * (Basic → Professional → Enterprise). Institution representatives can narrow
+ * every section to one department; department representatives only ever get
+ * their own department (the server enforces this, the UI just reflects it).
  */
+
+type Metrics = Record<string, any>;
 
 const fmtPct = (v: number | null | undefined) => (v == null ? '—' : `${v}%`);
 const fmtNum = (v: number | null | undefined) => (v == null ? '—' : Number(v).toLocaleString());
@@ -18,254 +34,517 @@ const fmtNum = (v: number | null | undefined) => (v == null ? '—' : Number(v).
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 /** "2026-03" → "Mar". */
 const monthLabel = (month: string) => MONTHS[Number(String(month).split('-')[1]) - 1] ?? month;
-/** "2026-03-09" → "9/3". */
+/** "2026-03-09" → "9 Mar". */
 const weekLabel = (week: string) => {
   const [, month, day] = String(week).split('-').map(Number);
-  return month && day ? `${day}/${month}` : week;
+  return month && day ? `${day} ${MONTHS[month - 1]}` : week;
 };
+const clock = (iso?: string | null) =>
+  iso ? new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '';
 
-function Section({ title, icon, badge, children }: { title: string; icon: IconName; badge?: string; children: React.ReactNode }) {
+function Tiles({ items }: { items: Array<{ label: string; value: string; tone?: string; icon?: IconName }> }) {
   const colors = useColors();
+  const styles = useStyles();
   return (
-    <View style={[s.card, { backgroundColor: colors.backgroundSecondary, borderColor: colors.borderSubtle }]}>
-      <View style={s.sectionHead}>
-        <Icon name={icon} size={18} color={colors.primary} />
-        <Text style={[s.sectionTitle, { color: colors.textDarker }]}>{title}</Text>
-        {badge ? (
-          <View style={[s.badge, { backgroundColor: colors.primary + '1A' }]}>
-            <Text style={[s.badgeText, { color: colors.primary }]}>{badge}</Text>
-          </View>
-        ) : null}
-      </View>
-      {children}
-    </View>
-  );
-}
-
-function Tiles({ items }: { items: { label: string; value: string; tone?: string }[] }) {
-  const colors = useColors();
-  return (
-    <View style={s.tiles}>
+    <View style={styles.tiles}>
       {items.map(item => (
-        <View key={item.label} style={[s.tile, { backgroundColor: colors.background }]}>
-          <Text style={[s.tileValue, { color: item.tone || colors.textDarker }]}>{item.value}</Text>
-          <Text style={[s.tileLabel, { color: colors.text }]}>{item.label}</Text>
+        <View key={item.label} style={styles.tile}>
+          {item.icon ? <Icon name={item.icon} size={16} color={item.tone || colors.textMuted} /> : null}
+          <Text style={[styles.tileValue, item.tone ? { color: item.tone } : null]}>{item.value}</Text>
+          <Text style={styles.tileLabel}>{item.label}</Text>
         </View>
       ))}
     </View>
   );
 }
 
-/** Horizontal percentage bar row. */
-function BarRow({ label, value, sub }: { label: string; value: number | null; sub?: string }) {
+function PlanBadge({ label }: { label: string }) {
   const colors = useColors();
-  const tone =
-    value == null ? colors.border : value >= 75 ? colors.success : value >= 50 ? colors.pendingDelivery : colors.primary;
-  return (
-    <View style={s.barRow}>
-      <View style={s.barHead}>
-        <Text numberOfLines={1} style={[s.barLabel, { color: colors.textDarker }]}>{label}</Text>
-        <Text style={[s.barValue, { color: colors.textDarker }]}>{fmtPct(value)}</Text>
-      </View>
-      <View style={[s.barTrack, { backgroundColor: colors.border + '66' }]}>
-        <View style={[s.barFill, { width: `${Math.min(100, value ?? 0)}%`, backgroundColor: tone }]} />
-      </View>
-      {sub ? <Text style={[s.barSub, { color: colors.text }]}>{sub}</Text> : null}
-    </View>
-  );
-}
-
-/** Tiny column chart for weekly series. */
-function MiniColumns({ data, max, color }: { data: { label: string; value: number | null }[]; max?: number; color: string }) {
-  const colors = useColors();
-  const top = max ?? Math.max(1, ...data.map(d => d.value ?? 0));
-  return (
-    <View style={s.columns}>
-      {data.map(d => (
-        <View key={d.label} style={s.columnWrap}>
-          <View style={[s.columnTrack, { backgroundColor: colors.border + '44' }]}>
-            <View style={[s.columnFill, { height: `${Math.max(2, ((d.value ?? 0) / top) * 100)}%`, backgroundColor: color }]} />
-          </View>
-          <Text style={[s.columnLabel, { color: colors.text }]}>{d.label}</Text>
-        </View>
-      ))}
-    </View>
-  );
+  return <Pill label={label.toUpperCase()} icon="workspace-premium" color={label === 'Basic' ? colors.info : colors.primary} />;
 }
 
 function LockedCard({ label, features }: { label: string; features: string[] }) {
   const colors = useColors();
+  const styles = useStyles();
   return (
-    <View style={[s.card, s.locked, { borderColor: colors.primary + '55', backgroundColor: colors.primary + '0A' }]}>
-      <View style={s.sectionHead}>
-        <Icon name="lock" size={18} color={colors.primary} />
-        <Text style={[s.sectionTitle, { color: colors.textDarker }]}>{label} analytics</Text>
-      </View>
-      <Text style={[s.lockedText, { color: colors.text }]}>Available on the {label} plan. Upgrading adds:</Text>
-      {features.map(feature => (
-        <View key={feature} style={s.featureRow}>
-          <Icon name="check" size={15} color={colors.primary} />
-          <Text style={[s.featureText, { color: colors.textDarker }]}>{feature}</Text>
+    <View style={styles.locked}>
+      <View style={styles.lockedHead}>
+        <View style={[styles.lockedIcon, { backgroundColor: colors.primary + '17' }]}>
+          <Icon name="lock" size={18} color={colors.primary} />
         </View>
-      ))}
-      <Text style={[s.lockedText, { color: colors.text, marginTop: 8 }]}>
-        Contact the iCampus team to change your institution's plan.
-      </Text>
+        <Text style={styles.lockedTitle}>{label} analytics</Text>
+      </View>
+      <Text style={styles.muted}>Available on the {label} plan. Upgrading adds:</Text>
+      <View style={styles.featureGrid}>
+        {features.map(feature => (
+          <View key={feature} style={styles.featureRow}>
+            <Icon name="check-circle" size={15} color={colors.primary} />
+            <Text style={styles.featureText}>{feature}</Text>
+          </View>
+        ))}
+      </View>
+      <Text style={styles.muted}>Contact the iCampus team to change your institution's plan.</Text>
     </View>
   );
 }
 
-export function SchoolAnalyticsView({ metrics }: { metrics: Record<string, any> }) {
-  const colors = useColors();
-  const basic = metrics.basic;
-  const pro = metrics.professional;
-  const ent = metrics.enterprise;
-  const inst = metrics.institution;
-  const lockedFor = (tier: string) => metrics.locked?.find((l: any) => l.tier === tier);
+// ---------------------------------------------------------------------------
+// KPIs: this month against last month
+// ---------------------------------------------------------------------------
 
-  if (!basic) return null;
+function KpiCard({
+  icon,
+  label,
+  tone,
+  kpi,
+  hint,
+}: {
+  icon: IconName;
+  label: string;
+  tone: string;
+  kpi: { current: number; previous: number; series: Array<{ value: number }> };
+  hint: string;
+}) {
+  const styles = useStyles();
+  return (
+    <View style={styles.kpi}>
+      <View style={[styles.kpiGlow, { backgroundColor: tone + '10' }]} />
+      <View style={styles.kpiTop}>
+        <View style={[styles.kpiIcon, { backgroundColor: tone + '1A' }]}>
+          <Icon name={icon} size={22} color={tone} />
+        </View>
+        <Sparkline data={kpi.series.map(point => point.value)} color={tone} width={104} height={38} />
+      </View>
+      <Text style={styles.kpiLabel}>{label}</Text>
+      <Text style={styles.kpiValue}>{fmtNum(kpi.current)}</Text>
+      <Delta current={kpi.current} previous={kpi.previous} suffix={`vs ${fmtNum(kpi.previous)} last month`} />
+      <Text style={styles.kpiHint}>{hint}</Text>
+    </View>
+  );
+}
+
+type TrendKey = 'students' | 'lecturers' | 'classes';
+
+function MonthlyTrend({ kpis }: { kpis: Metrics }) {
+  const colors = useColors();
+  const [key, setKey] = useState<TrendKey>('students');
+  const series = kpis[key].series as Array<{ month: string; value: number }>;
+  const names: Record<TrendKey, string> = { students: 'Students enrolled', lecturers: 'Lecturers enrolled', classes: 'Classes scheduled' };
+  return (
+    <Card>
+      <SectionHeader icon="show-chart" title="Six-month trend" subtitle="Monthly totals; hover a month for its value" />
+      <TabStrip
+        tabs={[
+          { id: 'students', label: 'Students', icon: 'school' },
+          { id: 'lecturers', label: 'Lecturers', icon: 'co-present' },
+          { id: 'classes', label: 'Classes', icon: 'event' },
+        ]}
+        active={key}
+        onChange={setKey}
+      />
+      <AreaChart
+        labels={series.map(point => monthLabel(point.month))}
+        series={[{ name: names[key], color: colors.primary, values: series.map(point => point.value) }]}
+      />
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Live lectures
+// ---------------------------------------------------------------------------
+
+function PulseDot({ color }: { color: string }) {
+  const pulse = React.useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(Animated.timing(pulse, { toValue: 1, duration: 1400, easing: Easing.out(Easing.ease), useNativeDriver: true }));
+    loop.start();
+    return () => loop.stop();
+  }, [pulse]);
+  return (
+    <View style={pulseStyles.wrap}>
+      <Animated.View
+        style={[
+          pulseStyles.ring,
+          { backgroundColor: color, opacity: pulse.interpolate({ inputRange: [0, 1], outputRange: [0.5, 0] }), transform: [{ scale: pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 2.6] }) }] },
+        ]}
+      />
+      <View style={[pulseStyles.dot, { backgroundColor: color }]} />
+    </View>
+  );
+}
+
+function LectureRow({ lecture, live }: { lecture: Record<string, any>; live: boolean }) {
+  const colors = useColors();
+  const styles = useStyles();
+  const rate = lecture.enrolled > 0 ? Math.round((lecture.checkIns / lecture.enrolled) * 100) : null;
+  return (
+    <View style={styles.lectureRow}>
+      <View style={[styles.lectureIcon, { backgroundColor: (live ? colors.success : colors.info) + '1A' }]}>
+        <Icon name={lecture.lectureType === 'Physical' ? 'meeting-room' : 'videocam'} size={18} color={live ? colors.success : colors.info} />
+      </View>
+      <View style={styles.flex}>
+        <Text numberOfLines={1} style={styles.rowTitle}>
+          {lecture.courseCode ? `${lecture.courseCode} · ` : ''}
+          {lecture.topicName}
+        </Text>
+        <Text numberOfLines={1} style={styles.rowMeta}>
+          {lecture.host} · {lecture.lectureType}
+          {lecture.location ? ` · ${lecture.location}` : ''} · {clock(lecture.startsAt)}
+          {lecture.endsAt ? `–${clock(lecture.endsAt)}` : ''}
+        </Text>
+      </View>
+      {live ? (
+        <View style={styles.lectureStat}>
+          <Text style={styles.rowTitle}>
+            {fmtNum(lecture.checkIns)}/{fmtNum(lecture.enrolled)}
+          </Text>
+          <Text style={styles.rowMeta}>{rate === null ? 'checked in' : `${rate}% in`}</Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function LiveSection({ live, onViewAll }: { live: Metrics; onViewAll: () => void }) {
+  const colors = useColors();
+  const styles = useStyles();
+  return (
+    <Card>
+      <SectionHeader
+        icon="podcasts"
+        title="Lectures right now"
+        subtitle={`${fmtNum(live.todayCount)} scheduled today · ${fmtNum(live.completedToday)} finished`}
+        onViewAll={onViewAll}
+      />
+      <View style={styles.liveHead}>
+        {live.ongoingCount > 0 ? <PulseDot color={colors.success} /> : <View style={[pulseStyles.dot, { backgroundColor: colors.textMuted }]} />}
+        <Text style={styles.liveCount}>{fmtNum(live.ongoingCount)}</Text>
+        <Text style={styles.muted}>{live.ongoingCount === 1 ? 'lecture in progress' : 'lectures in progress'}</Text>
+      </View>
+      {live.ongoing.map((lecture: Record<string, any>) => (
+        <LectureRow key={lecture.id} lecture={lecture} live />
+      ))}
+      {live.upcomingToday.length > 0 ? (
+        <>
+          <Text style={styles.subTitle}>Later today</Text>
+          {live.upcomingToday.map((lecture: Record<string, any>) => (
+            <LectureRow key={lecture.id} lecture={lecture} live={false} />
+          ))}
+        </>
+      ) : live.ongoingCount === 0 ? (
+        <Text style={styles.muted}>No more lectures today.</Text>
+      ) : null}
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The dashboard
+// ---------------------------------------------------------------------------
+
+export function SchoolAnalyticsView({
+  metrics,
+  department,
+  onDepartmentChange,
+  canFilter,
+}: {
+  metrics: Metrics;
+  department: string | null;
+  onDepartmentChange?: (department: string | null) => void;
+  canFilter: boolean;
+}) {
+  const colors = useColors();
+  const styles = useStyles();
+  const { push, setTab } = useNavigation();
+  const { basic, professional: pro, enterprise: ent, institution: inst, kpis, live } = metrics;
+  const lockedFor = (tier: string) => metrics.locked?.find((item: any) => item.tier === tier);
+  const departments: string[] = metrics.scope?.departments ?? [];
+  const scopeLabel = department || 'All departments';
+  const viewAll = (section: SchoolSectionId, filter?: string) => () => push({ name: 'schoolSection', section, department, filter });
+
+  if (!basic || !kpis) return null;
+  const attendance = basic.attendance;
+  const totalHeld = attendance.physicalLectures + attendance.onlineLectures;
 
   return (
-    <View style={s.container}>
-      <View style={[s.card, s.header, { backgroundColor: colors.backgroundSecondary, borderColor: colors.borderSubtle }]}>
-        <View style={{ flex: 1 }}>
-          <Text numberOfLines={2} style={[s.schoolName, { color: colors.textDarker }]}>{inst?.name || 'Your institution'}</Text>
-          <Text style={[s.meta, { color: colors.text }]}>Updated {metrics.generatedAt ? fromNow(metrics.generatedAt) : 'just now'}</Text>
-        </View>
-        <View style={[s.planPill, { backgroundColor: colors.primary }]}>
-          <Icon name="workspace-premium" size={14} color="#fff" />
-          <Text style={s.planText}>{inst?.tierLabel || 'Basic'} plan</Text>
-        </View>
-      </View>
-
-      <View style={s.grid}>
-        <View style={s.gridItem}>
-        <Section title="Student identity" icon="badge" badge="Basic">
-          <Tiles
-            items={[
-              { label: 'Students', value: fmtNum(basic.identity.totalStudents) },
-              { label: 'Verified students', value: fmtNum(basic.identity.verifiedStudents), tone: colors.success },
-              { label: 'Lecturers', value: fmtNum(basic.identity.totalLecturers) },
-              { label: 'Verification rate', value: fmtPct(basic.identity.verificationRatePct) },
-            ]}
-          />
-        </Section>
-        </View>
-
-        <View style={s.gridItem}>
-        <Section title="Attendance overview" icon="how-to-reg" badge="Basic">
-          <Tiles
-            items={[
-              { label: 'Attendance rate', value: fmtPct(basic.attendance.attendanceRatePct), tone: colors.primary },
-              { label: 'Lectures held', value: fmtNum(basic.attendance.lecturesHeld) },
-              { label: 'Check-ins', value: fmtNum(basic.attendance.checkIns) },
-              { label: 'Cancelled', value: fmtNum(basic.attendance.lecturesCancelled) },
-            ]}
-          />
-          <Text style={[s.meta, { color: colors.text, marginTop: 8 }]}>
-            {basic.attendance.physicalLectures} physical · {basic.attendance.onlineLectures} online lectures held
+    <View>
+      <View style={styles.hero}>
+        {inst?.logo ? <Image source={{ uri: inst.logo }} style={styles.heroLogo} /> : null}
+        <View style={styles.flex}>
+          <Text numberOfLines={2} style={styles.heroName}>{inst?.name || 'Your institution'}</Text>
+          <Text style={styles.muted}>
+            {metrics.session?.label} session · {scopeLabel} · updated {metrics.generatedAt ? fromNow(metrics.generatedAt) : 'just now'}
           </Text>
-        </Section>
+        </View>
+        <PlanBadge label={inst?.tierLabel || 'Basic'} />
+      </View>
+
+      {canFilter && departments.length > 0 ? (
+        <FilterChips
+          value={department ?? '__all'}
+          onChange={value => onDepartmentChange?.(value === '__all' ? null : value)}
+          options={[{ value: '__all', label: 'All departments' }, ...departments.map(name => ({ value: name, label: name }))]}
+        />
+      ) : department ? (
+        <View style={styles.scopeNote}>
+          <Icon name="lock-outline" size={15} color={colors.textMuted} />
+          <Text style={styles.muted}>Showing the {department} department only.</Text>
+        </View>
+      ) : null}
+
+      <View style={styles.kpis}>
+        <KpiCard
+          icon="school"
+          label="Total Students Enrolled"
+          tone={colors.series1}
+          kpi={kpis.students}
+          hint={`+${fmtNum(kpis.students.addedThisMonth)} this month · +${fmtNum(kpis.students.addedLastMonth)} last month`}
+        />
+        <KpiCard
+          icon="co-present"
+          label="Total Lecturers Enrolled"
+          tone={colors.series3}
+          kpi={kpis.lecturers}
+          hint={`+${fmtNum(kpis.lecturers.addedThisMonth)} this month · +${fmtNum(kpis.lecturers.addedLastMonth)} last month`}
+        />
+        <KpiCard icon="event-available" label="Total Classes Scheduled" tone={colors.primary} kpi={kpis.classes} hint="Lectures scheduled this month (cancelled excluded)" />
+      </View>
+
+      <View style={styles.grid}>
+        <View style={styles.gridWide}>
+          <MonthlyTrend kpis={kpis} />
+        </View>
+        <View style={styles.gridNarrow}>
+          <LiveSection live={live} onViewAll={viewAll('lectures', live.ongoingCount > 0 ? 'ongoing' : 'today')} />
         </View>
       </View>
 
-      <Section title="Courses & announcements" icon="campaign" badge="Basic">
+      <View style={styles.grid}>
+        <View style={styles.gridHalf}>
+          <Card>
+            <SectionHeader icon="how-to-reg" title="Attendance overview" subtitle="Current session, lectures held so far" onViewAll={viewAll('lectures')} />
+            <View style={styles.ringRow}>
+              <RingGauge value={attendance.attendanceRatePct} color={colors.primary} label="attendance" />
+              <View style={styles.flex}>
+                <Tiles
+                  items={[
+                    { label: 'Lectures held', value: fmtNum(attendance.lecturesHeld) },
+                    { label: 'Check-ins', value: fmtNum(attendance.checkIns) },
+                    { label: 'Cancelled', value: fmtNum(attendance.lecturesCancelled), tone: attendance.lecturesCancelled > 0 ? colors.pendingDelivery : undefined },
+                    { label: 'Scheduled', value: fmtNum(attendance.lecturesScheduled) },
+                  ]}
+                />
+              </View>
+            </View>
+            {totalHeld > 0 ? (
+              <>
+                <Text style={styles.subTitle}>Physical vs online</Text>
+                <View style={styles.splitBar}>
+                  <View style={{ flex: attendance.physicalLectures, backgroundColor: colors.series1 }} />
+                  <View style={{ flex: attendance.onlineLectures, backgroundColor: colors.series2 }} />
+                </View>
+                <Legend
+                  items={[
+                    { color: colors.series1, label: `Physical ${fmtNum(attendance.physicalLectures)}` },
+                    { color: colors.series2, label: `Online ${fmtNum(attendance.onlineLectures)}` },
+                  ]}
+                />
+              </>
+            ) : null}
+          </Card>
+        </View>
+        <View style={styles.gridHalf}>
+          <Card>
+            <SectionHeader icon="person-add-alt" title="New sign-ups" subtitle="Verified students and lecturers who joined each month" />
+            <AreaChart
+              height={170}
+              labels={basic.onboardingGrowth.map((g: any) => monthLabel(g.month))}
+              series={[
+                { name: 'Students', color: colors.series1, values: basic.onboardingGrowth.map((g: any) => g.students) },
+                { name: 'Lecturers', color: colors.series2, values: basic.onboardingGrowth.map((g: any) => g.lecturers) },
+              ]}
+            />
+            <Text style={[styles.muted, styles.gapTop]}>
+              Identity: {fmtNum(basic.identity.verifiedStudents)} of {fmtNum(basic.identity.totalStudents)} students verified ·{' '}
+              {fmtPct(basic.identity.verificationRatePct)} overall
+            </Text>
+          </Card>
+        </View>
+      </View>
+
+      <Card>
+        <SectionHeader icon="menu-book" title="Courses this session" subtitle={`${metrics.session?.label} · sorted by enrolment`} onViewAll={viewAll('courses')} />
         <Tiles
           items={[
-            { label: 'Active courses', value: fmtNum(basic.courses.totalActiveCourses) },
-            { label: 'Enrollments', value: fmtNum(basic.courses.studentEnrollments) },
+            { label: 'Active courses', value: fmtNum(basic.courses.totalActiveCourses), icon: 'menu-book' },
+            { label: 'Enrolments', value: fmtNum(basic.courses.studentEnrollments), icon: 'groups' },
             {
-              label: 'Without lecturer',
+              label: 'Without a lecturer',
               value: fmtNum(basic.courses.allocationStatus.unassigned),
+              icon: 'person-off',
               tone: basic.courses.allocationStatus.unassigned > 0 ? colors.pendingDelivery : undefined,
             },
-            { label: 'School memos', value: fmtNum(basic.announcements.memosPosted) },
           ]}
         />
-        {basic.announcements.lastPostedAt ? (
-          <Text style={[s.meta, { color: colors.text, marginTop: 8 }]}>
-            Last memo {fromNow(basic.announcements.lastPostedAt)} · {fmtNum(basic.announcements.totalImpressions)} views
-          </Text>
-        ) : null}
-        {basic.onboardingGrowth.length > 0 ? (
-          <>
-            <Text style={[s.subTitle, { color: colors.textDarker }]}>Verified sign-ups per month</Text>
-            <MiniColumns
-              color={colors.success}
-              data={basic.onboardingGrowth.map((g: any) => ({ label: monthLabel(g.month), value: g.students + g.lecturers }))}
-            />
-          </>
-        ) : null}
-      </Section>
+        <View style={styles.grid}>
+          <View style={styles.gridHalf}>
+            <Text style={styles.subTitle}>Top courses</Text>
+            {basic.courses.list.length === 0 ? <Text style={styles.muted}>No courses for this session yet.</Text> : null}
+            {basic.courses.list.map((course: any) => (
+              <View key={course.courseId} style={styles.listRow}>
+                <View style={styles.flex}>
+                  <Text numberOfLines={1} style={styles.rowTitle}>
+                    {course.courseCode} {course.courseTitle}
+                  </Text>
+                  <Text numberOfLines={1} style={styles.rowMeta}>
+                    {course.department}
+                    {course.level ? ` · ${course.level}L` : ''} · {course.lecturers.length ? course.lecturers.join(', ') : 'No lecturer'}
+                  </Text>
+                </View>
+                <Text style={styles.rowTitle}>{fmtNum(course.enrolled)}</Text>
+              </View>
+            ))}
+          </View>
+          {!department && basic.courses.byDepartment.length > 1 ? (
+            <View style={styles.gridHalf}>
+              <Text style={styles.subTitle}>Courses by department</Text>
+              {basic.courses.byDepartment.slice(0, 8).map((row: any) => (
+                <MeterRow
+                  key={row.department}
+                  label={row.department}
+                  value={row.courses}
+                  max={basic.courses.byDepartment[0].courses}
+                  unit=""
+                  color={colors.primary}
+                />
+              ))}
+            </View>
+          ) : null}
+        </View>
+      </Card>
+
+      <Card>
+        <SectionHeader
+          icon="campaign"
+          title="Announcements this session"
+          subtitle={`${fmtNum(basic.announcements.memosPosted)} memos · ${fmtNum(basic.announcements.notificationsSent)} notifications sent`}
+          right={<Button compact variant="soft" icon="send" title="New" onPress={() => setTab('Notifications')} />}
+          onViewAll={viewAll('announcements')}
+        />
+        {basic.announcements.recent.length === 0 ? <Text style={styles.muted}>Nothing announced this session yet.</Text> : null}
+        {basic.announcements.recent.map((item: any) => (
+          <View key={`${item.kind}-${item.id}`} style={styles.listRow}>
+            <View style={[styles.lectureIcon, { backgroundColor: colors.primary + '14' }]}>
+              <Icon name={item.kind === 'memo' ? 'article' : 'notifications-active'} size={18} color={colors.primary} />
+            </View>
+            <View style={styles.flex}>
+              <Text numberOfLines={1} style={styles.rowTitle}>{item.title}</Text>
+              <Text numberOfLines={2} style={styles.rowMeta}>{item.body}</Text>
+              <Text style={styles.rowMeta}>
+                {item.sentBy} · {item.department || 'All departments'} · {fromNow(item.createdAt)}
+              </Text>
+            </View>
+            <View style={styles.lectureStat}>
+              <Text style={styles.rowTitle}>{fmtNum(item.reach)}</Text>
+              <Text style={styles.rowMeta}>{item.reachLabel}</Text>
+            </View>
+          </View>
+        ))}
+      </Card>
 
       {pro ? (
         <>
-          <Section title="Tests & exam proctoring" icon="quiz" badge="Professional">
-            <Tiles
-              items={[
-                { label: 'Published tests', value: fmtNum(pro.assessments.published) },
-                { label: 'Submissions', value: fmtNum(pro.assessments.submissions) },
-                { label: 'Average score', value: fmtPct(pro.assessments.averageScorePct) },
-                { label: 'Pass rate (40%+)', value: fmtPct(pro.assessments.passRatePct), tone: colors.success },
-              ]}
-            />
-            <Text style={[s.meta, { color: colors.text, marginTop: 8 }]}>
-              {pro.assessments.flaggedSubmissions} flagged for review · {pro.assessments.impersonationBlocked} impersonation attempts blocked
-            </Text>
-          </Section>
+          <View style={styles.grid}>
+            <View style={styles.gridHalf}>
+              <Card>
+                <SectionHeader icon="quiz" title="Tests & proctoring" subtitle="Published tests this session" right={<PlanBadge label="Professional" />} />
+                <Tiles
+                  items={[
+                    { label: 'Published tests', value: fmtNum(pro.assessments.published) },
+                    { label: 'Submissions', value: fmtNum(pro.assessments.submissions) },
+                    { label: 'Average score', value: fmtPct(pro.assessments.averageScorePct) },
+                    { label: 'Pass rate (40%+)', value: fmtPct(pro.assessments.passRatePct), tone: colors.success },
+                  ]}
+                />
+                <Text style={styles.subTitle}>Score distribution</Text>
+                <BarChart color={colors.primary} data={pro.assessments.scoreBands.map((b: any) => ({ label: b.band, value: b.count }))} />
+                <Text style={[styles.muted, styles.gapTop]}>
+                  {fmtNum(pro.assessments.flaggedSubmissions)} flagged for review · {fmtNum(pro.assessments.impersonationBlocked)} failed the final identity check
+                </Text>
+              </Card>
+            </View>
+            <View style={styles.gridHalf}>
+              <Card>
+                <SectionHeader icon="trending-up" title="Weekly attendance" subtitle="Last 8 weeks" right={<PlanBadge label="Professional" />} />
+                <AreaChart
+                  max={100}
+                  unit="%"
+                  labels={pro.attendance.weeklyTrend.map((w: any) => weekLabel(w.week))}
+                  series={[{ name: 'Attendance', color: colors.primary, values: pro.attendance.weeklyTrend.map((w: any) => w.attendanceRatePct) }]}
+                />
+                <Text style={[styles.muted, styles.gapTop]}>
+                  Lecture exceptions: {fmtNum(pro.attendance.exceptionsApproved)} approved · {fmtNum(pro.attendance.exceptionsPending)} pending
+                </Text>
+              </Card>
+            </View>
+          </View>
 
-          <Section title="Attendance by department" icon="apartment" badge="Professional">
-            {pro.attendance.byDepartment.length === 0 ? (
-              <Text style={[s.meta, { color: colors.text }]}>No lectures held yet.</Text>
-            ) : (
-              pro.attendance.byDepartment.map((d: any) => <BarRow key={d.department} label={d.department} value={d.attendanceRatePct} />)
-            )}
-            <Text style={[s.subTitle, { color: colors.textDarker }]}>Weekly attendance (8 weeks)</Text>
-            <MiniColumns
-              max={100}
-              color={colors.primary}
-              data={pro.attendance.weeklyTrend.map((w: any) => ({ label: weekLabel(w.week), value: w.attendanceRatePct }))}
-            />
-            {pro.attendance.lowestCourses.length > 0 ? (
-              <>
-                <Text style={[s.subTitle, { color: colors.textDarker }]}>Courses needing attention</Text>
-                {pro.attendance.lowestCourses.map((c: any) => (
-                  <BarRow
-                    key={c.courseId}
-                    label={`${c.courseCode} ${c.courseTitle}`.trim()}
-                    value={c.attendanceRatePct}
-                    sub={`${c.lecturesHeld} lectures held`}
+          <View style={styles.grid}>
+            <View style={styles.gridHalf}>
+              <Card>
+                <SectionHeader
+                  icon="apartment"
+                  title={department ? 'Courses needing attention' : 'Attendance by department'}
+                  subtitle="Share of enrolled students who checked in"
+                  onViewAll={viewAll('courses')}
+                />
+                {!department
+                  ? pro.attendance.byDepartment.slice(0, 8).map((d: any) => (
+                      <MeterRow key={d.department} label={d.department} value={d.attendanceRatePct} color={colors.primary} />
+                    ))
+                  : null}
+                {department || pro.attendance.byDepartment.length === 0
+                  ? pro.attendance.lowestCourses.map((c: any) => (
+                      <MeterRow
+                        key={c.courseId}
+                        label={`${c.courseCode} ${c.courseTitle}`.trim()}
+                        value={c.attendanceRatePct}
+                        color={colors.pendingDelivery}
+                        sub={`${c.lecturesHeld} lectures held`}
+                      />
+                    ))
+                  : null}
+                {pro.attendance.byDepartment.length === 0 && pro.attendance.lowestCourses.length === 0 ? (
+                  <Text style={styles.muted}>No lectures held yet.</Text>
+                ) : null}
+              </Card>
+            </View>
+            <View style={styles.gridHalf}>
+              <Card>
+                <SectionHeader icon="co-present" title="Lecturer activity" subtitle="Most lectures delivered" onViewAll={viewAll('lecturers')} />
+                <Tiles
+                  items={[
+                    { label: 'Syllabus coverage', value: fmtPct(pro.lms.syllabusCoveragePct) },
+                    { label: 'Materials', value: fmtNum(pro.lms.materialsUploaded) },
+                    { label: 'Assignments', value: fmtNum(pro.lms.assignmentsPosted) },
+                  ]}
+                />
+                {pro.lecturers.length === 0 ? <Text style={styles.muted}>No lectures delivered yet.</Text> : null}
+                {pro.lecturers.slice(0, 5).map((l: any) => (
+                  <MeterRow
+                    key={l.uid}
+                    label={l.name}
+                    value={l.lecturesDelivered}
+                    max={pro.lecturers[0].lecturesDelivered}
+                    unit=" lectures"
+                    color={colors.series1}
+                    sub={`${l.physical} physical · ${l.online} online`}
                   />
                 ))}
-              </>
-            ) : null}
-            <Text style={[s.meta, { color: colors.text, marginTop: 8 }]}>
-              Exceptions: {pro.attendance.exceptionsApproved} approved · {pro.attendance.exceptionsPending} pending
-            </Text>
-          </Section>
-
-          <Section title="LMS & lecturer activity" icon="menu-book" badge="Professional">
-            <Tiles
-              items={[
-                { label: 'Syllabus coverage', value: fmtPct(pro.lms.syllabusCoveragePct) },
-                { label: 'Materials', value: fmtNum(pro.lms.materialsUploaded) },
-                { label: 'Assignments', value: fmtNum(pro.lms.assignmentsPosted) },
-              ]}
-            />
-            {pro.lecturers.length > 0 ? (
-              <>
-                <Text style={[s.subTitle, { color: colors.textDarker }]}>Most active lecturers</Text>
-                {pro.lecturers.map((l: any) => (
-                  <View key={l.uid} style={[s.listRow, { borderColor: colors.border + '55' }]}>
-                    <Text numberOfLines={1} style={[s.listName, { color: colors.textDarker }]}>{l.name}</Text>
-                    <Text style={[s.meta, { color: colors.text }]}>
-                      {l.lecturesDelivered} lectures · {l.physical} physical · {l.online} online
-                    </Text>
-                  </View>
-                ))}
-              </>
-            ) : null}
-          </Section>
+              </Card>
+            </View>
+          </View>
         </>
       ) : lockedFor('pro') ? (
         <LockedCard {...lockedFor('pro')} />
@@ -273,223 +552,287 @@ export function SchoolAnalyticsView({ metrics }: { metrics: Record<string, any> 
 
       {ent ? (
         <>
-          <Section title="At-risk students" icon="report" badge="Enterprise">
-            <Text style={[s.meta, { color: colors.text, marginBottom: 8 }]}>
-              Below {ent.atRisk.thresholds.attendancePct}% attendance or {ent.atRisk.thresholds.scorePct}% average score
-            </Text>
-            <Tiles items={[{ label: 'Students at risk', value: fmtNum(ent.atRisk.count), tone: colors.primary }]} />
-            {ent.atRisk.students.map((st: any) => (
-              <View key={st.uid} style={[s.listRow, { borderColor: colors.border + '55' }]}>
-                <View style={{ flex: 1 }}>
-                  <Text numberOfLines={1} style={[s.listName, { color: colors.textDarker }]}>{st.name}</Text>
-                  <Text style={[s.meta, { color: colors.text }]}>{st.matricNumber} · {st.department}</Text>
+          <View style={styles.grid}>
+            <View style={styles.gridHalf}>
+              <Card>
+                <SectionHeader
+                  icon="report"
+                  title="Students at risk"
+                  subtitle={`Below ${ent.atRisk.thresholds.attendancePct}% attendance or ${ent.atRisk.thresholds.scorePct}% average score`}
+                  onViewAll={viewAll('at-risk')}
+                />
+                <View style={styles.liveHead}>
+                  <Text style={[styles.liveCount, { color: ent.atRisk.count > 0 ? colors.criticalSeverity : colors.success }]}>{fmtNum(ent.atRisk.count)}</Text>
+                  <Text style={styles.muted}>students need follow-up</Text>
                 </View>
-                <View style={{ alignItems: 'flex-end' }}>
-                  <Text style={[s.meta, { color: colors.text }]}>Attendance {fmtPct(st.attendancePct)}</Text>
-                  <Text style={[s.meta, { color: colors.text }]}>Score {fmtPct(st.scorePct)}</Text>
-                </View>
+                {ent.atRisk.students.slice(0, 5).map((st: any) => (
+                  <View key={st.uid} style={styles.listRow}>
+                    <View style={styles.flex}>
+                      <Text numberOfLines={1} style={styles.rowTitle}>{st.name}</Text>
+                      <Text numberOfLines={1} style={styles.rowMeta}>
+                        {st.matricNumber} · {st.department}
+                        {st.level ? ` · ${st.level}L` : ''}
+                      </Text>
+                    </View>
+                    <View style={styles.lectureStat}>
+                      <Text style={styles.rowMeta}>Attendance {fmtPct(st.attendancePct)}</Text>
+                      <Text style={styles.rowMeta}>Score {fmtPct(st.scorePct)}</Text>
+                    </View>
+                  </View>
+                ))}
+              </Card>
+            </View>
+            <View style={styles.gridHalf}>
+              <Card>
+                <SectionHeader icon="bar-chart" title="Attendance distribution" subtitle="Students by personal attendance rate" right={<PlanBadge label="Enterprise" />} />
+                <BarChart color={colors.series1} data={ent.attendanceDistribution.map((b: any) => ({ label: b.band, value: b.count }))} />
+                {ent.levels.length > 0 ? (
+                  <>
+                    <Text style={styles.subTitle}>Students by level</Text>
+                    <BarChart height={140} color={colors.series3} data={ent.levels.map((l: any) => ({ label: l.level, value: l.students }))} />
+                  </>
+                ) : null}
+              </Card>
+            </View>
+          </View>
+
+          {!department && ent.departments.length > 1 ? (
+            <Card>
+              <SectionHeader icon="compare-arrows" title="Department comparison" subtitle="Average attendance and test score per student" />
+              <Legend items={[{ color: colors.series1, label: 'Attendance' }, { color: colors.series2, label: 'Test score' }]} />
+              <View style={[styles.grid, styles.gapTop]}>
+                {ent.departments.map((d: any) => (
+                  <View key={d.department} style={styles.deptCell}>
+                    <Text numberOfLines={1} style={styles.rowTitle}>{d.department}</Text>
+                    <Text style={styles.rowMeta}>{fmtNum(d.students)} students</Text>
+                    <MeterRow label="Attendance" value={d.averageAttendancePct} color={colors.series1} />
+                    <MeterRow label="Test score" value={d.averageScorePct} color={colors.series2} />
+                  </View>
+                ))}
               </View>
-            ))}
-          </Section>
+            </Card>
+          ) : null}
 
-          <Section title="Department comparison" icon="compare-arrows" badge="Enterprise">
-            {ent.departments.map((d: any) => (
-              <View key={d.department} style={[s.listRow, { borderColor: colors.border + '55' }]}>
-                <View style={{ flex: 1 }}>
-                  <Text style={[s.listName, { color: colors.textDarker }]}>{d.department}</Text>
-                  <Text style={[s.meta, { color: colors.text }]}>{d.students} students</Text>
-                </View>
-                <View style={{ alignItems: 'flex-end' }}>
-                  <Text style={[s.meta, { color: colors.text }]}>Attendance {fmtPct(d.averageAttendancePct)}</Text>
-                  <Text style={[s.meta, { color: colors.text }]}>Score {fmtPct(d.averageScorePct)}</Text>
-                </View>
-              </View>
-            ))}
-          </Section>
+          <View style={styles.grid}>
+            <View style={styles.gridHalf}>
+              <Card>
+                <SectionHeader icon="insights" title="12-week engagement" subtitle="Weekly check-ins and test submissions" />
+                <AreaChart
+                  labels={ent.engagementTrend.map((w: any) => weekLabel(w.week))}
+                  series={[
+                    { name: 'Check-ins', color: colors.series1, values: ent.engagementTrend.map((w: any) => w.checkIns) },
+                    { name: 'Test submissions', color: colors.series2, values: ent.engagementTrend.map((w: any) => w.submissions) },
+                  ]}
+                />
+              </Card>
+            </View>
+            <View style={styles.gridHalf}>
+              <Card>
+                <SectionHeader icon="grid-on" title="When lectures happen" subtitle="Lectures this session by day and hour" />
+                <Heatmap
+                  rows={ent.heatmap.days}
+                  columns={ent.heatmap.hours.map((h: number) => `${h}:00`)}
+                  counts={ent.heatmap.counts}
+                  color={colors.primary}
+                />
+              </Card>
+            </View>
+          </View>
 
-          <Section title="12-week engagement" icon="trending-up" badge="Enterprise">
-            <Text style={[s.subTitle, { color: colors.textDarker, marginTop: 0 }]}>Attendance check-ins</Text>
-            <MiniColumns color={colors.primary} data={ent.engagementTrend.map((w: any) => ({ label: weekLabel(w.week), value: w.checkIns }))} />
-            <Text style={[s.subTitle, { color: colors.textDarker }]}>Test submissions</Text>
-            <MiniColumns color={colors.success} data={ent.engagementTrend.map((w: any) => ({ label: weekLabel(w.week), value: w.submissions }))} />
-          </Section>
-
-          <Section title="Integrity & security" icon="security" badge="Enterprise">
-            <Tiles
-              items={[
-                { label: 'Flagged tests', value: fmtNum(ent.integrity.flaggedSubmissions), tone: colors.primary },
-                { label: 'Face mismatches', value: fmtNum(ent.integrity.identityMismatchesInTests) },
-                { label: 'Test interruptions', value: fmtNum(ent.integrity.testInterruptions) },
-                { label: 'Suspicious accounts', value: fmtNum(ent.integrity.accountsWithSuspiciousActivity) },
-              ]}
-            />
-            {Object.keys(ent.exceptionReasons || {}).length > 0 ? (
-              <Text style={[s.meta, { color: colors.text, marginTop: 8 }]}>
-                Exception reasons: {Object.entries(ent.exceptionReasons).map(([r, n]) => `${r} ${n}`).join(' · ')}
-              </Text>
-            ) : null}
-            {ent.support?.contactEmail ? (
-              <Text style={[s.meta, { color: colors.primary, marginTop: 8 }]}>Dedicated support: {ent.support.contactEmail}</Text>
-            ) : null}
-          </Section>
+          <View style={styles.grid}>
+            <View style={styles.gridHalf}>
+              <Card>
+                <SectionHeader icon="security" title="Exam integrity" subtitle="From the proctoring checks on every test" />
+                <Tiles
+                  items={[
+                    { label: 'Flagged tests', value: fmtNum(ent.integrity.flaggedSubmissions), tone: colors.primary },
+                    { label: 'Face mismatches', value: fmtNum(ent.integrity.identityMismatchesInTests) },
+                    { label: 'Another person seen', value: fmtNum(ent.integrity.multiplePeopleDetected) },
+                    { label: 'Look-aways', value: fmtNum(ent.integrity.lookAways) },
+                    { label: 'Left the test', value: fmtNum(ent.integrity.testInterruptions) },
+                    { label: 'Avg strikes per test', value: fmtNum(ent.integrity.averageStrikes) },
+                  ]}
+                />
+                {ent.integrity.flagReasons.length > 0 ? (
+                  <>
+                    <Text style={styles.subTitle}>Why tests were flagged</Text>
+                    {ent.integrity.flagReasons.map((r: any) => (
+                      <MeterRow key={r.reason} label={r.reason} value={r.count} max={ent.integrity.flagReasons[0].count} unit="" color={colors.criticalSeverity} />
+                    ))}
+                  </>
+                ) : null}
+                <Text style={[styles.muted, styles.gapTop]}>
+                  {fmtNum(ent.integrity.accountsWithSuspiciousActivity)} accounts with suspicious sign-ins · {fmtNum(ent.integrity.suspendedAccounts)} suspended
+                </Text>
+                {ent.support?.contactEmail ? <Text style={[styles.muted, { color: colors.primary }]}>Dedicated support: {ent.support.contactEmail}</Text> : null}
+              </Card>
+            </View>
+            <View style={styles.gridHalf}>
+              <Card>
+                <SectionHeader icon="work-outline" title="Lecturer workload" subtitle="Courses and students per lecturer" onViewAll={viewAll('lecturers')} />
+                {ent.lecturerLoad.length === 0 ? <Text style={styles.muted}>No lecturers assigned to courses yet.</Text> : null}
+                {ent.lecturerLoad.slice(0, 6).map((l: any) => (
+                  <MeterRow
+                    key={l.uid}
+                    label={l.name}
+                    value={l.students}
+                    max={ent.lecturerLoad[0].students}
+                    unit=" students"
+                    color={colors.series3}
+                    sub={`${l.courses} ${l.courses === 1 ? 'course' : 'courses'}`}
+                  />
+                ))}
+                {Object.keys(ent.exceptionReasons || {}).length > 0 ? (
+                  <Text style={[styles.muted, styles.gapTop]}>
+                    Exception reasons: {Object.entries(ent.exceptionReasons).map(([r, n]) => `${r} ${n}`).join(' · ')}
+                  </Text>
+                ) : null}
+              </Card>
+            </View>
+          </View>
         </>
-      ) : lockedFor('premium') ? (
-        <LockedCard {...lockedFor('premium')} />
+      ) : lockedFor('enterprise') ? (
+        <LockedCard {...lockedFor('enterprise')} />
       ) : null}
     </View>
   );
 }
 
-function StatusCard({ label, count, color, icon }: { label: string; count: string; color: string; icon: IconName }) {
-  const colors = useColors();
+/** The school admin's Overview tab: loads the dashboard and keeps the department filter. */
+export function SchoolOverview({ header }: { header?: React.ReactNode }) {
+  const { admin } = useSession();
+  const toast = useToast();
+  const styles = useStyles();
+  const canFilter = isSchoolAdminA(admin.adminType);
+  const [department, setDepartment] = useState<string | null>(null);
+  const [metrics, setMetrics] = useState<Metrics | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
+
+  const load = useCallback(
+    async (next: string | null) => {
+      setLoading(true);
+      setFailed(false);
+      try {
+        const result = await getAdminMetrics(canFilter ? next : null);
+        setMetrics(result.schoolMetrics ?? null);
+      } catch (reason) {
+        setFailed(true);
+        toast('error', errorMessage(reason), 'Dashboard Error');
+      } finally {
+        setLoading(false);
+      }
+    },
+    [canFilter, toast],
+  );
+
+  useEffect(() => {
+    void load(department);
+  }, [department, load]);
+
   return (
-    <View style={[s.statusCard, { borderLeftColor: color, backgroundColor: colors.backgroundSecondary }]}>
-      <Icon name={icon} size={22} color={color} />
-      <View>
-        <Text style={[s.statusCount, { color }]}>{count}</Text>
-        <Text style={[s.statusLabel, { color: colors.text }]}>{label}</Text>
-      </View>
-    </View>
+    <ScrollPage contentContainerStyle={styles.page}>
+      {header}
+      {metrics && !failed ? (
+        <View style={loading ? styles.refreshing : null}>
+          <SchoolAnalyticsView
+            metrics={metrics}
+            department={canFilter ? department : metrics.scope?.department ?? null}
+            onDepartmentChange={setDepartment}
+            canFilter={canFilter}
+          />
+        </View>
+      ) : loading ? (
+        <Loading label="Loading your institution's analytics..." />
+      ) : (
+        <EmptyState
+          icon="wifi-off"
+          title="Couldn't load the dashboard"
+          subtitle={failed ? 'Check your connection, then try again.' : 'No analytics were returned for your account.'}
+          buttonText="Try again"
+          buttonIcon="refresh"
+          onPress={() => void load(department)}
+        />
+      )}
+      {metrics && loading ? <Text style={styles.updating}>Updating…</Text> : null}
+      {metrics?.generatedAt ? <Text style={styles.footnote}>Generated {formatDate(metrics.generatedAt, true)}</Text> : null}
+    </ScrollPage>
   );
 }
 
-/** Older servers only send the flat legacy school metrics. */
-export function SchoolAdminDashboardView({ metrics }: { metrics: Record<string, any> }) {
-  const colors = useColors();
-  const { users, courses, academics } = metrics;
-  const growth: any[] = users?.onboardingGrowth ?? [];
-  const departments = Object.entries(courses?.departmentBreakdown ?? {});
-
-  return (
-    <View style={s.container}>
-      <Text style={[s.legacyHeader, { color: colors.textDarker }]}>Institutional Overview</Text>
-      <View style={s.statusGrid}>
-        <StatusCard label="Verified Students" count={String(users?.verifiedStudents ?? 0)} color={colors.success} icon="school" />
-        <StatusCard label="Verified Lecturers" count={String(users?.verifiedLecturers ?? 0)} color={colors.success} icon="person-outline" />
-        <StatusCard label="Active Courses" count={String(courses?.totalActiveCourses ?? 0)} color={colors.success} icon="menu-book" />
-        <StatusCard label="Student Enrollments" count={String(courses?.studentEnrollmentDensity ?? 0)} color={colors.success} icon="groups" />
-      </View>
-
-      <Text style={[s.legacyHeader, { color: colors.textDarker }]}>Onboarding Trends</Text>
-      <View style={[s.card, { backgroundColor: colors.backgroundSecondary, borderColor: colors.borderSubtle }]}>
-        {(['students', 'lecturers'] as const).map((key, index) => (
-          <View key={key}>
-            {index > 0 ? <View style={s.divider} /> : null}
-            <View style={s.trendRow}>
-              <Sparkline data={growth.map(item => item[key])} color={colors.success} />
-              <View>
-                <Text style={[s.trendLabel, { color: colors.text }]}>{key === 'students' ? 'Student' : 'Lecturer'} Growth Trend</Text>
-                <Text style={[s.trendLabel, { color: colors.text }]}>Last {growth.length} months</Text>
-              </View>
-            </View>
-          </View>
-        ))}
-      </View>
-
-      <Text style={[s.legacyHeader, { color: colors.textDarker }]}>Academic & Allocation Status</Text>
-      <View style={s.statusGrid}>
-        <StatusCard label="Assigned Courses" count={String(courses?.allocationStatus?.assigned ?? 0)} color={colors.success} icon="check-circle" />
-        <StatusCard label="Unassigned / Pending" count={String(courses?.allocationStatus?.unassigned ?? 0)} color={colors.pendingDelivery} icon="warning" />
-      </View>
-      <View style={[s.card, { backgroundColor: colors.backgroundSecondary, borderColor: colors.borderSubtle }]}>
-        {(
-          [
-            ['assignment', 'Total Assessments Created', academics?.totalAssessmentsCreated, colors.text],
-            ['check-circle', 'Test Submissions Logged', academics?.testSubmissionsCount, colors.success],
-            ['verified-user', 'Attendance Sync Volume', academics?.attendanceSyncVolume, colors.text],
-          ] as const
-        ).map(([icon, label, value, tone]) => (
-          <View key={label} style={s.statRow}>
-            <Icon name={icon} size={20} color={tone} />
-            <Text style={[s.statLabel, { color: colors.text }]}>{label}</Text>
-            <Text style={[s.statValue, { color: colors.textDarker }]}>{value ?? 0}</Text>
-          </View>
-        ))}
-      </View>
-
-      <Text style={[s.legacyHeader, { color: colors.textDarker }]}>Courses by Department</Text>
-      <View style={[s.card, { backgroundColor: colors.backgroundSecondary, borderColor: colors.borderSubtle }]}>
-        {departments.length === 0 ? (
-          <Text style={[s.emptyText, { color: colors.text }]}>No department data available.</Text>
-        ) : (
-          departments.map(([department, count], index) => (
-            <View key={department}>
-              <View style={s.deptRow}>
-                <Text style={[s.deptName, { color: colors.text }]}>{department}</Text>
-                <Text style={[s.deptCount, { color: colors.primary }]}>{String(count)} courses</Text>
-              </View>
-              {index < departments.length - 1 ? <View style={s.divider} /> : null}
-            </View>
-          ))
-        )}
-      </View>
-    </View>
-  );
-}
-
-const s = StyleSheet.create({
-  container: { paddingBottom: 30 },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 16 },
-  card: { borderRadius: 20, padding: 20, marginBottom: 16, borderWidth: 1 },
-  gridItem: { flexGrow: 1, flexBasis: 320 },
-  header: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  schoolName: { fontSize: 17, fontWeight: '800' },
-  planPill: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 },
-  planText: { color: '#fff', fontSize: 12, fontWeight: '800' },
-  sectionHead: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
-  sectionTitle: { flex: 1, fontSize: 15, fontWeight: '800' },
-  badge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 },
-  badgeText: { fontSize: 10.5, fontWeight: '800' },
-  tiles: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  tile: { flexGrow: 1, flexBasis: '45%', borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12 },
-  tileValue: { fontSize: 18, fontWeight: '800' },
-  tileLabel: { fontSize: 11.5, marginTop: 2, opacity: 0.75 },
-  meta: { fontSize: 12, opacity: 0.8 },
-  subTitle: { fontSize: 13, fontWeight: '800', marginTop: 14, marginBottom: 8 },
-  barRow: { marginBottom: 10 },
-  barHead: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
-  barLabel: { flex: 1, fontSize: 13, fontWeight: '600', marginRight: 8 },
-  barValue: { fontSize: 13, fontWeight: '800' },
-  barTrack: { height: 7, borderRadius: 4, overflow: 'hidden' },
-  barFill: { height: '100%', borderRadius: 4 },
-  barSub: { fontSize: 11, marginTop: 3, opacity: 0.7 },
-  columns: { flexDirection: 'row', alignItems: 'flex-end', gap: 4, height: 90 },
-  columnWrap: { flex: 1, alignItems: 'center' },
-  columnTrack: { width: '100%', height: 72, borderRadius: 4, justifyContent: 'flex-end', overflow: 'hidden' },
-  columnFill: { width: '100%', borderRadius: 4 },
-  columnLabel: { fontSize: 9, marginTop: 4, opacity: 0.7 },
-  listRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 9, borderBottomWidth: StyleSheet.hairlineWidth },
-  listName: { fontSize: 13.5, fontWeight: '700' },
-  locked: { borderWidth: 1, borderStyle: 'dashed' },
-  lockedText: { fontSize: 13, lineHeight: 19, marginBottom: 6 },
-  featureRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginVertical: 2 },
-  featureText: { fontSize: 13, fontWeight: '600' },
-  legacyHeader: { fontSize: 18, fontWeight: '700', alignSelf: 'center', marginBottom: 15 },
-  statusGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 15 },
-  statusCard: {
-    flexGrow: 1,
-    flexBasis: 180,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    padding: 14,
-    borderRadius: 12,
-    borderLeftWidth: 4,
-    shadowColor: PRIMARY_COLOR_TINT,
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-  },
-  statusCount: { fontSize: 20, fontWeight: '800' },
-  statusLabel: { fontSize: 12, marginTop: 2 },
-  trendRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 8 },
-  trendLabel: { fontSize: 14, fontWeight: '600' },
-  divider: { height: 1, backgroundColor: PRIMARY_COLOR_TINT_MAIN, marginVertical: 8 },
-  statRow: { flexDirection: 'row', alignItems: 'center', paddingBottom: 10 },
-  statLabel: { flex: 1, fontSize: 14, marginHorizontal: 8 },
-  statValue: { fontSize: 16, fontWeight: '700' },
-  deptRow: { flexDirection: 'row', justifyContent: 'space-between', paddingBottom: 15 },
-  deptName: { fontSize: 14 },
-  deptCount: { fontSize: 14, fontWeight: '600' },
-  emptyText: { fontSize: 14, textAlign: 'center', paddingVertical: 15 },
+const pulseStyles = StyleSheet.create({
+  wrap: { width: 12, height: 12, alignItems: 'center', justifyContent: 'center' },
+  ring: { position: 'absolute', width: 12, height: 12, borderRadius: 6 },
+  dot: { width: 10, height: 10, borderRadius: 5 },
 });
+
+const useStyles = makeStyles(c =>
+  StyleSheet.create({
+    page: { paddingBottom: 120 },
+    refreshing: { opacity: 0.55 },
+    updating: { position: 'absolute', top: 8, right: 8, fontSize: 12, fontWeight: '700', color: c.primary },
+    footnote: { fontSize: 11.5, color: c.textMuted, textAlign: 'center', marginTop: 4 },
+    flex: { flex: 1, minWidth: 0 },
+    muted: { fontSize: 12.5, color: c.textMuted, lineHeight: 18 },
+    gapTop: { marginTop: 10 },
+    hero: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 14,
+      padding: 18,
+      borderRadius: 20,
+      marginBottom: 16,
+      borderWidth: 1,
+      borderColor: c.borderSubtle,
+      backgroundColor: c.backgroundSecondary,
+    },
+    heroLogo: { width: 48, height: 48, borderRadius: 24, backgroundColor: c.surfaceRaised },
+    heroName: { fontSize: 18, fontWeight: '900', color: c.textDarker, marginBottom: 3 },
+    scopeNote: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 16 },
+    kpis: { flexDirection: 'row', flexWrap: 'wrap', gap: 16, marginBottom: 16 },
+    kpi: {
+      flexGrow: 1,
+      flexBasis: 250,
+      padding: 20,
+      borderRadius: 20,
+      borderWidth: 1,
+      borderColor: c.borderSubtle,
+      backgroundColor: c.backgroundSecondary,
+      overflow: 'hidden',
+      gap: 4,
+    },
+    kpiGlow: { position: 'absolute', width: 180, height: 180, borderRadius: 90, right: -60, top: -70 },
+    kpiTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
+    kpiIcon: { width: 44, height: 44, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+    kpiLabel: { fontSize: 13, fontWeight: '700', color: c.textMuted },
+    kpiValue: { fontSize: 34, fontWeight: '900', color: c.textDarker, letterSpacing: -0.8 },
+    kpiHint: { fontSize: 11.5, color: c.textMuted, marginTop: 6 },
+    grid: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 16 },
+    gridHalf: { flexGrow: 1, flexBasis: 380, minWidth: 0 },
+    gridWide: { flexGrow: 3, flexBasis: 420, minWidth: 0 },
+    gridNarrow: { flexGrow: 2, flexBasis: 320, minWidth: 0 },
+    tiles: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 4 },
+    tile: { flexGrow: 1, flexBasis: 120, borderRadius: 14, paddingVertical: 12, paddingHorizontal: 12, backgroundColor: c.surfaceRaised, borderWidth: 1, borderColor: c.borderSubtle, gap: 2 },
+    tileValue: { fontSize: 20, fontWeight: '900', color: c.textDarker },
+    tileLabel: { fontSize: 11.5, color: c.textMuted },
+    subTitle: { fontSize: 13, fontWeight: '800', marginTop: 14, marginBottom: 10, color: c.textDarker },
+    ringRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 18 },
+    splitBar: { flexDirection: 'row', height: 10, borderRadius: 5, overflow: 'hidden', gap: 2 },
+    liveHead: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 },
+    liveCount: { fontSize: 30, fontWeight: '900', color: c.textDarker, letterSpacing: -0.6 },
+    lectureRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, borderTopWidth: 1, borderTopColor: c.borderSubtle },
+    lectureIcon: { width: 36, height: 36, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+    lectureStat: { alignItems: 'flex-end' },
+    listRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: c.borderSubtle },
+    rowTitle: { fontSize: 13.5, fontWeight: '700', color: c.textDarker },
+    rowMeta: { fontSize: 12, color: c.textMuted, marginTop: 2 },
+    deptCell: { flexGrow: 1, flexBasis: 220, padding: 14, borderRadius: 14, backgroundColor: c.surfaceRaised, borderWidth: 1, borderColor: c.borderSubtle, marginBottom: 12, gap: 6 },
+    locked: { borderRadius: 20, padding: 20, marginBottom: 16, borderWidth: 1, borderStyle: 'dashed', borderColor: c.primary + '55', backgroundColor: c.primary + '0A', gap: 10 },
+    lockedHead: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    lockedIcon: { width: 36, height: 36, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+    lockedTitle: { fontSize: 16, fontWeight: '800', color: c.textDarker },
+    featureGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    featureRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexBasis: 240, flexGrow: 1 },
+    featureText: { fontSize: 13, fontWeight: '600', color: c.textDarker },
+  }),
+);

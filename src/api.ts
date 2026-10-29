@@ -7,6 +7,9 @@ export type AdminUser = {
   profilePic?: string[] | string;
   isVerified?: boolean;
   lastAccessed?: string;
+  schoolCode?: string | null;
+  /** Department reps only. */
+  department?: string | null;
   [key: string]: unknown;
 };
 
@@ -182,7 +185,112 @@ export const loginAdmin = async (identifier: string, password: string) => {
   };
 };
 
-export const getAdminMetrics = () => request<Record<string, any>>('admins/get-overview');
+export const getAdminMetrics = (department?: string | null) =>
+  request<Record<string, any>>(
+    `admins/get-overview${department ? `?${new URLSearchParams({ department })}` : ''}`,
+  );
+
+// ---------------------------------------------------------------------------
+// School administrators. The server pins department reps to their own
+// department, so `department` here only narrows an institution rep's view.
+// ---------------------------------------------------------------------------
+
+export type SchoolRep = {
+  uid: string;
+  firstname: string;
+  lastname: string;
+  email: string;
+  adminType: 'school_admin_a' | 'school_admin_b';
+  level: 'a' | 'b';
+  department: string | null;
+  schoolName: string;
+  profilePic?: string[] | string;
+  isVerified?: boolean;
+  lastAccessed?: unknown;
+  createdAt?: unknown;
+};
+
+export type Seats = { used: number; limit: number | null };
+
+export type SchoolRepsResult = {
+  reps: SchoolRep[];
+  schoolName: string;
+  tier: string;
+  tierLabel: string;
+  seats: { a: Seats; b: Seats };
+  canManage: boolean;
+  canInviteA: boolean;
+  domainWhitelist: string[];
+};
+
+export type Page<T> = { items: T[]; total: number; page: number; totalPages: number };
+
+export const getSchoolSection = (
+  section: string,
+  options: { department?: string | null; page?: number; q?: string; filter?: string } = {},
+) => {
+  const params = new URLSearchParams({ page: String(options.page ?? 1), limit: String(LIST_PAGE_SIZE) });
+  if (options.department) params.set('department', options.department);
+  if (options.q) params.set('q', options.q);
+  if (options.filter) params.set('filter', options.filter);
+  return request<Page<Record<string, any>> & Record<string, any>>(
+    `admins/school/sections/${encodeURIComponent(section)}?${params}`,
+  );
+};
+
+export const getSchoolReps = () => request<SchoolRepsResult>('admins/school/reps');
+
+export const inviteSchoolRep = (rep: {
+  firstname: string;
+  lastname: string;
+  email: string;
+  department?: string;
+  level: 'a' | 'b';
+}) =>
+  request<{ message: string; rep: SchoolRep }>('admins/school/reps', {
+    method: 'POST',
+    headers: { 'X-Idempotency-Key': idempotencyKey() },
+    body: JSON.stringify(rep),
+  });
+
+export const updateSchoolRep = (uid: string, rep: { firstname?: string; lastname?: string; department?: string }) =>
+  request<{ message: string; rep: SchoolRep }>(`admins/school/reps/${encodeURIComponent(uid)}`, {
+    method: 'PATCH',
+    headers: { 'X-Idempotency-Key': idempotencyKey() },
+    body: JSON.stringify(rep),
+  });
+
+export const removeSchoolRep = (uid: string) =>
+  request<{ message: string }>(`admins/school/reps/${encodeURIComponent(uid)}`, {
+    method: 'DELETE',
+    headers: { 'X-Idempotency-Key': idempotencyKey() },
+  });
+
+export type SchoolAudience = 'students' | 'lecturers' | 'reps';
+
+export const sendSchoolNotification = (notification: {
+  title: string;
+  message: string;
+  audiences: SchoolAudience[];
+  department?: string | null;
+}) =>
+  request<{ message: string; announcement: Record<string, any> }>('admins/school/notifications', {
+    method: 'POST',
+    headers: { 'X-Idempotency-Key': idempotencyKey() },
+    body: JSON.stringify(notification),
+  });
+
+export const getSchoolNotifications = (page = 1) =>
+  request<{
+    sent: Page<Record<string, any>>;
+    inbox: Array<Record<string, any>>;
+    audiences: SchoolAudience[];
+    department: string | null;
+    departments: string[];
+  }>(`admins/school/notifications?page=${page}&limit=${LIST_PAGE_SIZE}`);
+
+export const getSchoolAuditLog = (page = 1) =>
+  request<Page<Record<string, any>>>(`admins/school/audit-log?page=${page}&limit=${LIST_PAGE_SIZE}`);
 
 export const getAdmins = async () => {
   const result = await request<any>('admins/fetch-all');
@@ -432,6 +540,8 @@ export const createAdmin = (admin: {
   lastname: string;
   email: string;
   adminType: string;
+  schoolCode?: string;
+  department?: string;
 }) =>
   request<any>('admins/create', {
     method: 'POST',

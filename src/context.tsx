@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useRef, useState } from 'react';
 import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
-import { AdminUser, SupportTicket } from './api';
+import { AdminUser, SchoolRep, SupportTicket } from './api';
 import { useColors } from './theme';
 import { Icon } from './icons';
 
@@ -10,9 +10,18 @@ export type Role =
   | 'support'
   | 'moderator'
   | 'analyst'
-  | 'school_administrator';
+  | 'school_admin_a'
+  | 'school_admin_b';
 
-const ALL_ROLES: Role[] = ['super_admin', 'finance', 'support', 'moderator', 'analyst', 'school_administrator'];
+const ALL_ROLES: Role[] = ['super_admin', 'finance', 'support', 'moderator', 'analyst', 'school_admin_a', 'school_admin_b'];
+const SCHOOL_ROLES: Role[] = ['school_admin_a', 'school_admin_b'];
+
+/** "school_administrator" is the old name for the A-level institution representative. */
+export const normalizeRole = (adminType: string | undefined) =>
+  adminType === 'school_administrator' ? 'school_admin_a' : adminType ?? '';
+export const isSchoolAdminA = (adminType: string | undefined) => normalizeRole(adminType) === 'school_admin_a';
+export const isSchoolAdminB = (adminType: string | undefined) => adminType === 'school_admin_b';
+export const isSchoolAdmin = (adminType: string | undefined) => isSchoolAdminA(adminType) || isSchoolAdminB(adminType);
 
 export type Tab =
   | 'Overview'
@@ -24,6 +33,7 @@ export type Tab =
   | 'Subscriptions'
   | 'Store'
   | 'Access Control'
+  | 'Notifications'
   | 'Institutions'
   | 'Drop-off Stations'
   | 'Advertisements'
@@ -42,9 +52,10 @@ export const TAB_ACCESS: Record<Tab, Role[]> = {
   Subscriptions: ['super_admin'],
   Store: ['super_admin', 'finance'],
   'Access Control': ALL_ROLES,
+  Notifications: SCHOOL_ROLES,
   Institutions: ['super_admin', 'support'],
   'Drop-off Stations': ['super_admin', 'support'],
-  Advertisements: ['super_admin', 'school_administrator'],
+  Advertisements: ['super_admin', 'school_admin_a'],
   'Tax Entries': ['super_admin', 'finance'],
 };
 
@@ -58,7 +69,9 @@ export const LOG_CATEGORIES: Partial<Record<Tab, string>> = {
 };
 
 export const canAccess = (tab: Tab, adminType: string) =>
-  (TAB_ACCESS[tab] as string[]).includes(adminType);
+  (TAB_ACCESS[tab] as string[]).includes(normalizeRole(adminType));
+
+export type SchoolSectionId = 'courses' | 'announcements' | 'lectures' | 'at-risk' | 'lecturers';
 
 export type Route =
   | { name: 'ticket'; ticket: SupportTicket }
@@ -68,7 +81,10 @@ export type Route =
   | { name: 'adminForm'; admin?: AdminUser }
   | { name: 'institutionForm'; item?: Record<string, any> }
   | { name: 'stationForm'; item?: Record<string, any> }
-  | { name: 'adForm'; item?: Record<string, any> };
+  | { name: 'adForm'; item?: Record<string, any> }
+  | { name: 'schoolSection'; section: SchoolSectionId; department?: string | null; filter?: string }
+  | { name: 'repForm'; rep?: SchoolRep; canInviteA?: boolean }
+  | { name: 'auditLog' };
 
 type Session = { admin: AdminUser; logout: () => void };
 type Navigation = {

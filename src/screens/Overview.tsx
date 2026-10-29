@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { LineChart } from 'react-native-chart-kit';
 import { AdBanner, AdItem } from '../AdBanner';
 import { getAdminMetrics, getAds, getSchoolDetails, getStationDetails } from '../api';
 import { finiteNumbers, Sparkline, useMeasuredWidth } from '../charts';
-import { errorMessage, useNavigation, useSession, useToast } from '../context';
+import { errorMessage, isSchoolAdmin, useNavigation, useSession, useToast } from '../context';
 import { Icon, IconName } from '../icons';
 import { openInApp } from '../links';
 import { makeStyles, useColors } from '../theme';
@@ -17,12 +17,13 @@ import {
   formatLabel,
   Loading,
   Pill,
+  ScrollPage,
   SectionHeader,
   Sheet,
   UserAvatar,
   UserIdentity,
 } from '../ui';
-import { SchoolAdminDashboardView, SchoolAnalyticsView } from './SchoolAnalytics';
+import { SchoolAnalyticsView, SchoolOverview } from './SchoolAnalytics';
 
 type Stats = Record<string, any>;
 
@@ -66,9 +67,6 @@ function DashboardSummary({ stats }: { stats: Stats }) {
     <View style={styles.summary}>
       <StatCard icon="groups" label="Active Users" tone={colors.info} hint="People using iCampus right now">
         <Text style={styles.statValue}>{Number(stats.activeUsers ?? 0).toLocaleString()}</Text>
-      </StatCard>
-      <StatCard icon="account-balance-wallet" label="Total Liquidity" tone={colors.success} hint="Funds held across the platform" trend={stats.liquidityTrend?.inFlow}>
-        <CurrencyDisplay value={stats.platformLiquidity ?? 0} size="large" success />
       </StatCard>
       <StatCard
         icon="confirmation-number"
@@ -408,6 +406,12 @@ function DetailSheet({
 /** The dashboard. `header` is the page intro, scrolled along with the content. */
 export function Overview({ header }: { header?: React.ReactNode }) {
   const { admin } = useSession();
+  return isSchoolAdmin(admin.adminType) ? <SchoolOverview header={header} /> : <StaffOverview header={header} />;
+}
+
+/** iCampus staff dashboard: platform health, finance and institutions. */
+function StaffOverview({ header }: { header?: React.ReactNode }) {
+  const { admin } = useSession();
   const { setTab } = useNavigation();
   const toast = useToast();
   const [stats, setStats] = useState<Stats | null>(null);
@@ -437,11 +441,11 @@ export function Overview({ header }: { header?: React.ReactNode }) {
   const canViewFinance = ['super_admin', 'finance'].includes(role);
   const canViewSystem = ['super_admin', 'analyst'].includes(role);
   const canViewInstitutions = ['super_admin', 'support'].includes(role);
-  const canViewSchoolMetrics = ['super_admin', 'school_administrator'].includes(role);
+  const canViewAds = role === 'super_admin';
 
   const schoolMetrics = stats?.schoolMetrics;
   return (
-    <ScrollView style={overviewStyles.scroll} showsVerticalScrollIndicator={false} contentContainerStyle={overviewStyles.content}>
+    <ScrollPage contentContainerStyle={overviewStyles.content}>
       {header}
       {loading ? (
         <Loading label="Loading data..." />
@@ -457,7 +461,7 @@ export function Overview({ header }: { header?: React.ReactNode }) {
       ) : (
         <>
           <DashboardSummary stats={stats} />
-          {canViewSchoolMetrics ? <AdsPreviewSection onViewAll={() => setTab('Advertisements')} /> : null}
+          {canViewAds ? <AdsPreviewSection onViewAll={() => setTab('Advertisements')} /> : null}
           {canViewSystem ? <SystemHealthSection latency={Number(stats.latencyData) || 0} locations={stats.locationStats ?? []} /> : null}
           {canViewFinance ? <FinanceSection trend={stats.liquidityTrend ?? {}} /> : null}
           {canViewFinance ? <TaxEntryPreviewSection items={stats.recentTaxes ?? []} onViewAll={() => setTab('Tax Entries')} /> : null}
@@ -481,25 +485,17 @@ export function Overview({ header }: { header?: React.ReactNode }) {
               />
             </View>
           ) : null}
-          {canViewSchoolMetrics && schoolMetrics ? (
-            schoolMetrics.basic ? (
-              // Tiered view (Basic / Professional / Enterprise by school plan).
-              <SchoolAnalyticsView metrics={schoolMetrics} />
-            ) : (
-              // Older servers only send the flat legacy fields.
-              <SchoolAdminDashboardView metrics={schoolMetrics} />
-            )
-          ) : null}
+          {/* Only sent when a super admin asks for one school with ?schoolCode=. */}
+          {schoolMetrics?.basic ? <SchoolAnalyticsView metrics={schoolMetrics} department={null} canFilter={false} /> : null}
         </>
       )}
       <DetailSheet kind="school" id={schoolId} onClose={() => setSchoolId(null)} />
       <DetailSheet kind="station" id={stationId} onClose={() => setStationId(null)} />
-    </ScrollView>
+    </ScrollPage>
   );
 }
 
 const overviewStyles = StyleSheet.create({
-  scroll: { flex: 1 },
   content: { paddingBottom: 120 },
   entities: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 16 },
 });

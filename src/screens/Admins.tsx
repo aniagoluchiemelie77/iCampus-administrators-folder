@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Animated, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { AdminUser, createAdmin, deleteAdmin, getAdmins, updateAdmin } from '../api';
 import { useMeasuredWidth } from '../charts';
-import { errorMessage, useNavigation, useSession, useToast } from '../context';
+import { errorMessage, normalizeRole, useNavigation, useSession, useToast } from '../context';
 import { Icon, IconName } from '../icons';
 import { Colors, makeStyles, useColors } from '../theme';
 import {
@@ -20,6 +20,7 @@ import {
   PageHeader,
   parseDate,
   Pill,
+  ScrollPage,
   SectionHeader,
   UserAvatar,
 } from '../ui';
@@ -30,12 +31,19 @@ const ROLE_META: Record<string, { icon: IconName; tone: (c: Colors) => string }>
   support: { icon: 'support-agent', tone: c => c.info },
   moderator: { icon: 'gavel', tone: () => '#8e5cd9' },
   analyst: { icon: 'analytics', tone: () => '#0f9fa3' },
-  school_administrator: { icon: 'school', tone: c => c.pendingDelivery },
+  school_admin_a: { icon: 'account-balance', tone: c => c.pendingDelivery },
+  school_admin_b: { icon: 'apartment', tone: c => c.info },
+};
+
+const ROLE_LABELS: Record<string, string> = {
+  school_admin_a: 'Institution Rep (A)',
+  school_admin_b: 'Department Rep (B)',
 };
 
 const roleMeta = (role: string | undefined, colors: Colors) => {
-  const meta = ROLE_META[role ?? ''] ?? { icon: 'person' as IconName, tone: (c: Colors) => c.textMuted };
-  return { icon: meta.icon, tone: meta.tone(colors), label: formatLabel(role || 'administrator') };
+  const key = normalizeRole(role);
+  const meta = ROLE_META[key] ?? { icon: 'person' as IconName, tone: (c: Colors) => c.textMuted };
+  return { icon: meta.icon, tone: meta.tone(colors), label: ROLE_LABELS[key] ?? formatLabel(key || 'administrator') };
 };
 
 const fullName = (admin: AdminUser) => [admin.firstname, admin.lastname].filter(Boolean).join(' ') || 'Administrator';
@@ -165,18 +173,18 @@ export function AdminManagement() {
 
   const roleCounts = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const item of admins ?? []) counts.set(item.adminType, (counts.get(item.adminType) ?? 0) + 1);
+    for (const item of admins ?? []) counts.set(normalizeRole(item.adminType), (counts.get(normalizeRole(item.adminType)) ?? 0) + 1);
     return [...counts.entries()];
   }, [admins]);
 
   if (!admins) return <Loading />;
-  const shown = roleFilter === 'all' ? admins : admins.filter(item => item.adminType === roleFilter);
+  const shown = roleFilter === 'all' ? admins : admins.filter(item => normalizeRole(item.adminType) === roleFilter);
   const columns = Math.max(1, Math.floor((width + GAP) / (CARD_MIN_WIDTH + GAP)));
   const cardWidth = width > 0 ? (width - GAP * (columns - 1)) / columns : undefined;
 
   return (
     <>
-      <ScrollView style={styles.flex} contentContainerStyle={styles.list} showsVerticalScrollIndicator={false}>
+      <ScrollPage contentContainerStyle={styles.list}>
         <SectionHeader
           icon="admin-panel-settings"
           title="iCampus Administrators"
@@ -232,7 +240,7 @@ export function AdminManagement() {
             )) : null
           )}
         </View>
-      </ScrollView>
+      </ScrollPage>
       <ConfirmModal
         visible={Boolean(selected)}
         onClose={() => setSelected(null)}
@@ -249,6 +257,7 @@ export function AdminManagement() {
 const ROLE_OPTIONS = [
   { value: 'moderator', label: 'Moderator' },
   { value: 'support', label: 'Support' },
+  { value: 'school_admin_a', label: 'School Institution Rep (A)' },
 ] as const;
 
 export function AdminForm({ admin }: { admin?: AdminUser }) {
@@ -261,8 +270,10 @@ export function AdminForm({ admin }: { admin?: AdminUser }) {
     firstname: admin?.firstname ?? '',
     lastname: admin?.lastname ?? '',
     email: admin?.email ?? '',
-    adminType: admin?.adminType ?? 'support',
+    adminType: normalizeRole(admin?.adminType) || 'support',
+    schoolCode: String(admin?.schoolCode ?? ''),
   });
+  const schoolRep = form.adminType === 'school_admin_a' || form.adminType === 'school_admin_b';
   const [saving, setSaving] = useState(false);
 
   if (currentAdmin.adminType !== 'super_admin') {
@@ -275,7 +286,7 @@ export function AdminForm({ admin }: { admin?: AdminUser }) {
   }
 
   const valid =
-    form.firstname.trim() && form.lastname.trim() && (editing || isValidEmail(form.email));
+    form.firstname.trim() && form.lastname.trim() && (editing || isValidEmail(form.email)) && (editing || !schoolRep || form.schoolCode.trim());
 
   const save = async () => {
     setSaving(true);
@@ -283,7 +294,13 @@ export function AdminForm({ admin }: { admin?: AdminUser }) {
       if (admin) {
         await updateAdmin(admin.uid, { firstname: form.firstname.trim(), lastname: form.lastname.trim(), adminType: form.adminType });
       } else {
-        await createAdmin({ ...form, firstname: form.firstname.trim(), lastname: form.lastname.trim(), email: form.email.trim() });
+        await createAdmin({
+          firstname: form.firstname.trim(),
+          lastname: form.lastname.trim(),
+          email: form.email.trim(),
+          adminType: form.adminType,
+          ...(schoolRep ? { schoolCode: form.schoolCode.trim() } : {}),
+        });
       }
       toast('success', admin ? 'Administrator updated.' : 'Administrator created.', 'Saved');
       pop();
@@ -310,7 +327,25 @@ export function AdminForm({ admin }: { admin?: AdminUser }) {
           value={form.email}
           onChangeText={value => setForm({ ...form, email: value })}
         />
-        <OptionPicker label="Admin Role" value={form.adminType} options={ROLE_OPTIONS} onChange={value => setForm({ ...form, adminType: value })} />
+        {editing && schoolRep ? (
+          <Text style={styles.formNote}>School representatives keep their level; their institution rep manages department reps.</Text>
+        ) : (
+          <OptionPicker
+            label="Admin Role"
+            value={form.adminType as (typeof ROLE_OPTIONS)[number]['value']}
+            options={ROLE_OPTIONS}
+            onChange={value => setForm({ ...form, adminType: value })}
+            hint={schoolRep ? "The school's first representative, created when the contract is signed. They add the rest from their own Access Control tab." : undefined}
+          />
+        )}
+        {schoolRep && !editing ? (
+          <Field
+            label="School code"
+            value={form.schoolCode}
+            onChangeText={value => setForm({ ...form, schoolCode: value })}
+            placeholder="The institution's ID from the Institutions tab"
+          />
+        ) : null}
         <Button title={saving ? 'Saving...' : 'Save Changes'} onPress={() => void save()} loading={saving} disabled={!valid} style={styles.submit} />
       </ScrollView>
     </View>
@@ -364,6 +399,7 @@ const useStyles = makeStyles(c =>
     presence: { width: 8, height: 8, borderRadius: 4 },
     actions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
     form: { width: '100%', maxWidth: 640, alignSelf: 'center', paddingBottom: 40 },
+    formNote: { fontSize: 13, color: c.textMuted, marginBottom: 16, lineHeight: 19 },
     submit: { marginTop: 20 },
   }),
 );
