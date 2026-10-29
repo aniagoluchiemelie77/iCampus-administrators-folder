@@ -24,8 +24,8 @@ import { Overview } from './src/screens/Overview';
 import { AdminSearch } from './src/screens/Search';
 import { SupportChat, SupportInquiries } from './src/screens/Support';
 import { TicketDetail, TicketsSection } from './src/screens/Tickets';
-import { makeStyles, useColors } from './src/theme';
-import { ConfirmModal, formatLabel, ScreenTransition, TabStrip, UserAvatar, UserIdentity } from './src/ui';
+import { makeStyles, ThemeProvider, useColors } from './src/theme';
+import { ConfirmModal, formatLabel, IconButton, ScreenTransition, TabStrip, ThemeToggle, UserAvatar, UserIdentity } from './src/ui';
 
 const TAB_META: Record<Tab, { icon: IconName; description: string }> = {
   Overview: { icon: 'dashboard', description: 'Platform health, finance and institution activity at a glance.' },
@@ -47,8 +47,6 @@ function TabContent({ tab }: { tab: Tab }) {
   const category = LOG_CATEGORIES[tab];
   if (category) return <ActivityLogs key={tab} category={category} label={tab} />;
   switch (tab) {
-    case 'Overview':
-      return <Overview />;
     case 'Tickets':
       return <TicketsSection />;
     case 'Access Control':
@@ -87,6 +85,28 @@ function RouteContent({ route }: { route: Route }) {
   }
 }
 
+const greeting = () => {
+  const hour = new Date().getHours();
+  return hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+};
+
+/** Title block at the top of each tab. */
+function PageIntro({ tab, firstname }: { tab: Tab; firstname?: string }) {
+  const styles = useStyles();
+  const overview = tab === 'Overview';
+  return (
+    <View style={styles.pageHeader}>
+      {overview ? (
+        <Text style={styles.pageEyebrow}>
+          {new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' }).toUpperCase()}
+        </Text>
+      ) : null}
+      <Text style={styles.pageTitle}>{overview ? `${greeting()}${firstname ? `, ${firstname.split(' ')[0]}` : ''}` : tab}</Text>
+      <Text style={styles.pageDescription}>{TAB_META[tab].description}</Text>
+    </View>
+  );
+}
+
 function Dashboard({ session, onLogout }: { session: AdminSession; onLogout: () => void }) {
   const colors = useColors();
   const styles = useStyles();
@@ -117,87 +137,107 @@ function Dashboard({ session, onLogout }: { session: AdminSession; onLogout: () 
 
   const route = stack[stack.length - 1];
   const fabRight = compact ? 16 : 32;
+  const intro = <PageIntro tab={tab} firstname={admin.firstname} />;
 
   return (
     <SessionProvider value={{ admin, logout: onLogout }}>
       <NavigationProvider value={navigation}>
-        <View style={styles.app}>
-          <View style={[styles.topBar, compact && styles.topBarCompact]}>
-            <Pressable accessibilityRole="button" accessibilityLabel="Go to overview" onPress={() => navigation.setTab('Overview')} style={styles.brand}>
-              <Logo size={compact ? 40 : 46} />
-              <View>
-                <Text style={styles.brandName}>iCampus</Text>
-                <Text style={styles.brandCaption}>ADMIN PORTAL</Text>
-              </View>
-            </Pressable>
-            <View style={styles.account}>
-              <UserAvatar profilePic={admin.profilePic} firstName={admin.firstname} lastName={admin.lastname} size={compact ? 36 : 42} />
-              {!compact ? (
-                <View style={styles.accountText}>
-                  <UserIdentity firstname={admin.firstname} lastname={admin.lastname} isVerified={admin.isVerified} showVerifyIcon />
-                  <Text style={styles.accountRole}>{formatLabel(admin.adminType)}</Text>
+        <View style={[styles.app, compact && styles.appCompact]}>
+          {compact ? (
+            <View style={styles.topBar}>
+              <Pressable accessibilityRole="button" accessibilityLabel="Go to overview" onPress={() => navigation.setTab('Overview')} style={styles.brand}>
+                <Logo size={36} />
+                <View>
+                  <Text style={styles.brandName}>iCampus</Text>
+                  <Text style={styles.brandCaption}>ADMIN PORTAL</Text>
                 </View>
-              ) : null}
-              <Pressable
-                accessibilityLabel="Sign out"
-                accessibilityRole="button"
-                onPress={() => setConfirmLogout(true)}
-                style={({ hovered }: any) => [styles.logout, hovered && { backgroundColor: colors.primary + '14' }]}
-              >
-                <Icon name="logout" size={18} color={colors.primary} />
-                {!compact ? <Text style={styles.logoutText}>Sign out</Text> : null}
               </Pressable>
-            </View>
-          </View>
-
-          <View style={[styles.workspace, compact && styles.workspaceCompact]}>
-            {compact ? (
-              <View style={styles.compactTabs}>
-                <TabStrip tabs={visibleTabs.map(item => ({ id: item, label: item }))} active={tab} onChange={navigation.setTab} />
+              <View style={styles.topActions}>
+                <ThemeToggle />
+                <UserAvatar profilePic={admin.profilePic} firstName={admin.firstname} lastName={admin.lastname} size={34} />
+                <IconButton filled icon="logout" size={19} label="Sign out" onPress={() => setConfirmLogout(true)} />
               </View>
-            ) : (
-              <ScrollView style={styles.sidebar} contentContainerStyle={styles.sidebarContent}>
+            </View>
+          ) : (
+            <View style={styles.sidebar}>
+              <Pressable accessibilityRole="button" accessibilityLabel="Go to overview" onPress={() => navigation.setTab('Overview')} style={styles.sidebarBrand}>
+                <View style={styles.brandMark}>
+                  <Logo size={34} />
+                </View>
+                <View>
+                  <Text style={styles.brandName}>iCampus</Text>
+                  <Text style={styles.brandCaption}>ADMIN PORTAL</Text>
+                </View>
+              </Pressable>
+
+              <ScrollView style={styles.sidebarNav} contentContainerStyle={styles.sidebarNavContent} showsVerticalScrollIndicator={false}>
                 <Text style={styles.sidebarLabel}>WORKSPACE</Text>
                 {visibleTabs.map(item => {
-                  const active = item === tab && !route;
+                  const selected = item === tab;
                   return (
                     <Pressable
                       accessibilityRole="tab"
-                      accessibilityState={{ selected: active }}
+                      accessibilityState={{ selected: selected && !route }}
                       key={item}
                       onPress={() => navigation.setTab(item)}
-                      style={({ hovered }: any) => [
-                        styles.navItem,
-                        item === tab && styles.navItemActive,
-                        hovered && item !== tab && styles.navItemHover,
-                      ]}
+                      style={({ hovered }: any) => [styles.navItem, selected && styles.navItemActive, hovered && !selected && styles.navItemHover]}
                     >
-                      <Icon name={TAB_META[item].icon} size={20} color={item === tab ? colors.primary : colors.text} />
-                      <Text style={[styles.navText, item === tab && styles.navTextActive]}>{item}</Text>
+                      <View style={[styles.navIcon, selected && styles.navIconActive]}>
+                        <Icon name={TAB_META[item].icon} size={19} color={selected ? colors.btnTextColor : colors.textMuted} />
+                      </View>
+                      <Text numberOfLines={1} style={[styles.navText, selected && styles.navTextActive]}>{item}</Text>
                     </Pressable>
                   );
                 })}
               </ScrollView>
-            )}
 
-            <View style={styles.main}>
-              {route ? (
-                <ScreenTransition key={stack.length} style={styles.content}>
-                  <RouteContent route={route} />
-                </ScreenTransition>
-              ) : (
-                <ScreenTransition key={tab} style={styles.content}>
-                  <View style={styles.pageHeader}>
-                    <Text style={styles.pageTitle}>{tab === 'Overview' ? 'Admin Dashboard' : tab}</Text>
-                    <Text style={styles.pageDescription}>{TAB_META[tab].description}</Text>
+              <View style={styles.sidebarFooter}>
+                <ThemeToggle showLabel />
+                <View style={styles.accountCard}>
+                  <UserAvatar profilePic={admin.profilePic} firstName={admin.firstname} lastName={admin.lastname} size={40} />
+                  <View style={styles.accountText}>
+                    <UserIdentity firstname={admin.firstname} lastname={admin.lastname} isVerified={admin.isVerified} showVerifyIcon size="small" />
+                    <Text numberOfLines={1} style={styles.accountRole}>{formatLabel(admin.adminType)}</Text>
                   </View>
-                  <View style={styles.flex}>
-                    <TabContent tab={tab} />
-                  </View>
-                </ScreenTransition>
-              )}
-              {!route ? <AdminFab right={fabRight} /> : null}
+                </View>
+                <Pressable
+                  accessibilityLabel="Sign out"
+                  accessibilityRole="button"
+                  onPress={() => setConfirmLogout(true)}
+                  style={({ hovered, pressed }: any) => [styles.logout, (hovered || pressed) && styles.logoutHover]}
+                >
+                  <Icon name="logout" size={18} color={colors.primary} />
+                  <Text style={styles.logoutText}>Sign out</Text>
+                </Pressable>
+              </View>
             </View>
+          )}
+
+          <View style={styles.main}>
+            {compact ? (
+              <View style={styles.compactTabs}>
+                <TabStrip
+                  tabs={visibleTabs.map(item => ({ id: item, label: item, icon: TAB_META[item].icon }))}
+                  active={tab}
+                  onChange={navigation.setTab}
+                  style={styles.compactStrip}
+                />
+              </View>
+            ) : null}
+            {route ? (
+              <ScreenTransition key={stack.length} style={[styles.content, compact && styles.contentCompact]}>
+                <RouteContent route={route} />
+              </ScreenTransition>
+            ) : (
+              <ScreenTransition key={tab} style={[styles.content, compact && styles.contentCompact]}>
+                {/* The overview scrolls its intro with the page; list tabs keep it pinned above their list. */}
+                {tab === 'Overview' ? null : intro}
+                <View style={styles.flex}>
+                  {tab === 'Overview' ? <Overview header={intro} /> : <TabContent tab={tab} />}
+                </View>
+              </ScreenTransition>
+            )}
+            {!route ? <AdminFab right={fabRight} /> : null}
           </View>
         </View>
         <ConfirmModal
@@ -259,7 +299,7 @@ function Root() {
   return <Dashboard key={session.admin.uid} session={session} onLogout={logout} />;
 }
 
-export default function App() {
+function ThemedApp() {
   const colors = useColors();
   return (
     <View style={[rootStyles.root, { backgroundColor: colors.background }]}>
@@ -271,6 +311,14 @@ export default function App() {
   );
 }
 
+export default function App() {
+  return (
+    <ThemeProvider>
+      <ThemedApp />
+    </ThemeProvider>
+  );
+}
+
 const rootStyles = StyleSheet.create({
   root: { flex: 1 },
   loading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
@@ -278,42 +326,66 @@ const rootStyles = StyleSheet.create({
 
 const useStyles = makeStyles(c =>
   StyleSheet.create({
-    app: { flex: 1, backgroundColor: c.background },
-    flex: { flex: 1 },
+    app: { flex: 1, flexDirection: 'row', backgroundColor: c.background },
+    appCompact: { flexDirection: 'column' },
+    flex: { flex: 1, minHeight: 0 },
     topBar: {
-      height: 72,
+      height: 62,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      paddingHorizontal: 24,
+      paddingHorizontal: 16,
       backgroundColor: c.backgroundSecondary,
       borderBottomWidth: 1,
-      borderBottomColor: c.border + '66',
+      borderBottomColor: c.borderSubtle,
     },
-    topBarCompact: { height: 62, paddingHorizontal: 16 },
+    topActions: { flexDirection: 'row', alignItems: 'center', gap: 10 },
     brand: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-    brandName: { color: c.primary, fontWeight: '800', fontSize: 18 },
-    brandCaption: { color: c.text, fontSize: 9, letterSpacing: 1.2, marginTop: 2 },
-    account: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-    accountText: { maxWidth: 260 },
-    accountRole: { color: c.text, fontSize: 11, marginTop: 2, opacity: 0.8 },
-    logout: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1, borderColor: c.border },
-    logoutText: { color: c.primary, fontWeight: '700', fontSize: 13 },
-    workspace: { flex: 1, flexDirection: 'row' },
-    workspaceCompact: { flexDirection: 'column' },
-    compactTabs: { paddingHorizontal: 16, paddingTop: 12 },
-    sidebar: { width: 240, flexGrow: 0, backgroundColor: c.backgroundSecondary, borderRightWidth: 1, borderRightColor: c.border + '66' },
-    sidebarContent: { padding: 16, gap: 2 },
-    sidebarLabel: { color: c.text, opacity: 0.7, fontWeight: '700', fontSize: 10, letterSpacing: 1.1, paddingHorizontal: 12, marginBottom: 10 },
-    navItem: { flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 10, paddingVertical: 11, paddingHorizontal: 12, borderLeftWidth: 3, borderLeftColor: 'transparent' },
-    navItemActive: { backgroundColor: c.primary + '14', borderLeftColor: c.primary },
+    brandName: { color: c.primary, fontWeight: '900', fontSize: 19, letterSpacing: -0.3 },
+    brandCaption: { color: c.textMuted, fontSize: 9, fontWeight: '700', letterSpacing: 1.6, marginTop: 1 },
+    sidebar: { width: 264, backgroundColor: c.backgroundSecondary, borderRightWidth: 1, borderRightColor: c.borderSubtle },
+    sidebarBrand: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 22, paddingTop: 24, paddingBottom: 20 },
+    brandMark: { width: 46, height: 46, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: c.primary + '14' },
+    sidebarNav: { flex: 1 },
+    sidebarNavContent: { paddingHorizontal: 14, paddingBottom: 12, gap: 3 },
+    sidebarLabel: { color: c.textMuted, fontWeight: '800', fontSize: 10.5, letterSpacing: 1.4, paddingHorizontal: 10, marginTop: 4, marginBottom: 10 },
+    navItem: { flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 12, paddingVertical: 7, paddingHorizontal: 8 },
+    navItemActive: { backgroundColor: c.primary + '14' },
     navItemHover: { backgroundColor: c.primary + '0A' },
-    navText: { color: c.text, fontSize: 14, fontWeight: '500' },
-    navTextActive: { color: c.primary, fontWeight: '700' },
-    main: { flex: 1, minWidth: 0 },
-    content: { width: '100%', maxWidth: 1280, alignSelf: 'center', paddingHorizontal: 16, paddingTop: 16 },
-    pageHeader: { marginBottom: 16 },
-    pageTitle: { color: c.textDarker, fontSize: 24, fontWeight: '800' },
-    pageDescription: { color: c.text, fontSize: 13, marginTop: 4, opacity: 0.85 },
+    navIcon: { width: 34, height: 34, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+    navIconActive: {
+      backgroundColor: c.primary,
+      shadowColor: c.primary,
+      shadowOpacity: 0.35,
+      shadowRadius: 8,
+      shadowOffset: { width: 0, height: 3 },
+    },
+    navText: { flex: 1, color: c.text, fontSize: 14, fontWeight: '600' },
+    navTextActive: { color: c.primary, fontWeight: '800' },
+    sidebarFooter: { padding: 14, gap: 10, borderTopWidth: 1, borderTopColor: c.borderSubtle },
+    accountCard: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 10, borderRadius: 14, backgroundColor: c.surfaceRaised, borderWidth: 1, borderColor: c.borderSubtle },
+    accountText: { flex: 1, minWidth: 0 },
+    accountRole: { color: c.textMuted, fontSize: 11.5, fontWeight: '600', marginTop: 2 },
+    logout: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      paddingVertical: 11,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: c.primary + '55',
+    },
+    logoutHover: { backgroundColor: c.primary + '12', borderColor: c.primary },
+    logoutText: { color: c.primary, fontWeight: '800', fontSize: 14 },
+    main: { flex: 1, minWidth: 0, minHeight: 0 },
+    compactTabs: { paddingHorizontal: 16, paddingTop: 12 },
+    compactStrip: { marginBottom: 0 },
+    content: { width: '100%', maxWidth: 1280, alignSelf: 'center', paddingHorizontal: 32, paddingTop: 28, minHeight: 0 },
+    contentCompact: { paddingHorizontal: 16, paddingTop: 16 },
+    pageHeader: { marginBottom: 22 },
+    pageEyebrow: { color: c.primary, fontSize: 11.5, fontWeight: '800', letterSpacing: 1.2, marginBottom: 6 },
+    pageTitle: { color: c.textDarker, fontSize: 28, fontWeight: '900', letterSpacing: -0.5 },
+    pageDescription: { color: c.textMuted, fontSize: 14, marginTop: 6 },
   }),
 );

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, Image, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { AdItem, AdVideo } from '../AdBanner';
+import { AdCard, AdItem, displayDomain } from '../AdBanner';
 import {
   deleteAd,
   deleteInstitution,
@@ -15,6 +15,7 @@ import {
   saveInstitution,
   saveStation,
 } from '../api';
+import { useMeasuredWidth } from '../charts';
 import { errorMessage, useNavigation, useSession, useToast } from '../context';
 import { Icon } from '../icons';
 import { makeStyles, useColors } from '../theme';
@@ -28,6 +29,7 @@ import {
   Loading,
   OptionPicker,
   PageHeader,
+  Pill,
   SectionHeader,
   Sheet,
   ToggleRow,
@@ -495,11 +497,15 @@ export function StationForm({ item }: { item?: Item }) {
 // Advertisements
 // ---------------------------------------------------------------------------
 
+const AD_MIN_WIDTH = 340;
+const AD_GAP = 16;
+
 export function AdsList() {
   const { admin } = useSession();
   const { push } = useNavigation();
   const colors = useColors();
   const styles = useStyles();
+  const { width, onLayout } = useMeasuredWidth();
   // The ads endpoint returns every active ad at once.
   const list = usePagedList(useCallback(async (page: number) => (page === 1 ? getAds() : []), []), Infinity);
   const deletion = useDeletion(item => deleteAd(item.id), () => void list.refresh(), 'Advertisement deleted successfully.');
@@ -508,45 +514,88 @@ export function AdsList() {
   const canManage = (ad: Item) =>
     admin.adminType === 'super_admin' ? ad.creatorType !== 'school_administrator' : ad.addedBy === admin.uid;
 
+  const ads = list.items as AdItem[];
+  const videos = ads.filter(ad => ad.type === 'video').length;
+  const columns = Math.max(1, Math.floor((width + AD_GAP) / (AD_MIN_WIDTH + AD_GAP)));
+  const cardWidth = width > 0 ? (width - AD_GAP * (columns - 1)) / columns : 0;
+
   return (
     <>
-      <PagedList
-        title="Advertisement Banners"
-        addLabel="Add Advert"
-        onAdd={() => push({ name: 'adForm' })}
-        list={list}
-        emptyIcon="campaign"
-        emptyTitle="No active advertisements"
-        renderItem={item => {
-          const ad = item as AdItem;
-          return (
-            <View style={styles.itemCard}>
-              <View style={[styles.adMedia, { backgroundColor: colors.primary }]}>
-                {ad.type === 'video' ? (
-                  <AdVideo uri={ad.mediaUrl} playing={false} style={styles.adThumb} />
-                ) : (
-                  <Image source={{ uri: ad.mediaUrl }} style={styles.adThumb} />
-                )}
-                {ad.type === 'video' ? (
-                  <View style={styles.videoBadge}>
-                    <Icon name="videocam" size={16} color="#fff" />
-                  </View>
-                ) : null}
-              </View>
-              <View style={styles.flex}>
-                <View style={styles.advertiser}>
-                  <Image source={{ uri: ad.advertiserLogo }} style={styles.advertiserLogo} />
-                  <Text numberOfLines={1} style={styles.name}>{ad.advertiserName}</Text>
-                </View>
-                <Text style={styles.meta}>{ad.tagline || ad.targetUrl || 'No tagline provided'}</Text>
-              </View>
-              {canManage(item) ? (
-                <ItemActions name={ad.advertiserName} onEdit={() => push({ name: 'adForm', item })} onDelete={() => deletion.setTarget(item)} />
-              ) : null}
+      <ScrollView style={styles.flex} contentContainerStyle={styles.list} showsVerticalScrollIndicator={false}>
+        <SectionHeader
+          icon="campaign"
+          title="Advertisement Banners"
+          subtitle={list.loading ? 'Loading banners' : `${ads.length} active · ${ads.length - videos} image · ${videos} video`}
+          right={
+            <View style={styles.headerActions}>
+              <IconButton filled size={19} icon="refresh" label="Refresh" onPress={() => void list.refresh()} />
+              <Button compact icon="add" title="Add Advert" onPress={() => push({ name: 'adForm' })} />
             </View>
-          );
-        }}
-      />
+          }
+        />
+        {list.loading ? (
+          <Loading />
+        ) : ads.length === 0 ? (
+          <EmptyState
+            icon="campaign"
+            title="No active advertisements"
+            subtitle="Banners you add appear on the iCampus home feed."
+            buttonText="Add Advert"
+            buttonIcon="add"
+            onPress={() => push({ name: 'adForm' })}
+          />
+        ) : (
+          <View onLayout={onLayout} style={styles.adGrid}>
+            {cardWidth > 0
+              ? ads.map(ad => {
+                  const manageable = canManage(ad);
+                  const school = ad.creatorType === 'school_administrator';
+                  return (
+                    <View key={String(ad.id)} style={[styles.adCard, { width: cardWidth }]}>
+                      <AdCard ad={ad} playing={false} height={200} />
+                      <View style={styles.adBody}>
+                        <View style={styles.adMetaRow}>
+                          <Pill
+                            label={school ? 'SCHOOL AD' : 'PLATFORM AD'}
+                            icon={school ? 'school' : 'public'}
+                            color={school ? colors.pendingDelivery : colors.info}
+                          />
+                          {ad.addedBy === admin.uid ? <Pill label="YOURS" icon="person" color={colors.primary} /> : null}
+                        </View>
+                        <View style={styles.adLinkRow}>
+                          <Icon name="link" size={16} color={colors.textMuted} />
+                          <Text numberOfLines={1} style={[styles.adLink, !ad.targetUrl && styles.adLinkMissing]}>
+                            {displayDomain(ad.targetUrl) || 'No target link'}
+                          </Text>
+                        </View>
+                      </View>
+                      <View style={styles.adFooter}>
+                        {manageable ? (
+                          <>
+                            <Button compact variant="soft" icon="edit" title="Edit" onPress={() => push({ name: 'adForm', item: ad })} style={styles.flex} />
+                            <IconButton
+                              filled
+                              size={19}
+                              icon="delete-outline"
+                              color={colors.criticalSeverity}
+                              label={`Delete ${ad.advertiserName}`}
+                              onPress={() => deletion.setTarget(ad)}
+                            />
+                          </>
+                        ) : (
+                          <View style={styles.adLocked}>
+                            <Icon name="lock-outline" size={15} color={colors.textMuted} />
+                            <Text style={styles.meta}>Managed by {school ? 'the school administrator' : 'iCampus'}</Text>
+                          </View>
+                        )}
+                      </View>
+                    </View>
+                  );
+                })
+              : null}
+          </View>
+        )}
+      </ScrollView>
       <ConfirmModal
         visible={Boolean(deletion.target)}
         onClose={() => deletion.setTarget(null)}
@@ -682,22 +731,47 @@ const useStyles = makeStyles(c =>
     list: { paddingBottom: 110 },
     listHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 6 },
     footer: { marginVertical: 16 },
-    itemCard: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 15, borderRadius: 15, marginBottom: 12, backgroundColor: c.backgroundSecondary },
+    itemCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 14,
+      padding: 16,
+      borderRadius: 18,
+      marginBottom: 12,
+      borderWidth: 1,
+      borderColor: c.borderSubtle,
+      backgroundColor: c.backgroundSecondary,
+    },
+    headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    adGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: AD_GAP },
+    adCard: {
+      borderRadius: 22,
+      overflow: 'hidden',
+      borderWidth: 1,
+      borderColor: c.borderSubtle,
+      backgroundColor: c.backgroundSecondary,
+      shadowColor: c.shadow,
+      shadowOpacity: 0.06,
+      shadowRadius: 16,
+      shadowOffset: { width: 0, height: 6 },
+    },
+    adBody: { paddingHorizontal: 16, paddingTop: 14, gap: 10 },
+    adMetaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+    adLinkRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    adLink: { flexShrink: 1, fontSize: 13, fontWeight: '600', color: c.text },
+    adLinkMissing: { color: c.textMuted, fontStyle: 'italic' },
+    adFooter: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 16 },
+    adLocked: { flexDirection: 'row', alignItems: 'center', gap: 6, minHeight: 38 },
     logo: { width: 56, height: 56, borderRadius: 28 },
     logoPlaceholder: { backgroundColor: c.primary + '22' },
     name: { fontSize: 16, fontWeight: '700', color: c.textDarker, flexShrink: 1 },
     sideBySide: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 8, marginTop: 4 },
-    meta: { fontSize: 12, color: c.text },
+    meta: { fontSize: 12, color: c.textMuted },
     metaStrong: { fontSize: 13, color: c.text, marginTop: 4 },
     actions: { flexDirection: 'row', alignItems: 'center' },
     carousel: { width: CAROUSEL_SIZE, height: CAROUSEL_SIZE, borderRadius: 12, flexGrow: 0 },
     carouselImage: { width: CAROUSEL_SIZE, height: CAROUSEL_SIZE },
-    adMedia: { width: 120, height: 72, borderRadius: 10, overflow: 'hidden' },
-    adThumb: { width: '100%', height: '100%' },
-    videoBadge: { position: 'absolute', right: 6, bottom: 6, padding: 3, borderRadius: 6, backgroundColor: 'rgba(0,0,0,0.5)' },
-    advertiser: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 },
-    advertiserLogo: { width: 28, height: 28, borderRadius: 8, backgroundColor: '#eee' },
-    taxCard: { paddingHorizontal: 12, borderRadius: 12, marginBottom: 8, backgroundColor: c.backgroundSecondary },
+    taxCard: { paddingHorizontal: 8, borderRadius: 16, marginBottom: 8, borderWidth: 1, borderColor: c.borderSubtle, backgroundColor: c.backgroundSecondary },
     form: { width: '100%', maxWidth: 640, alignSelf: 'center', paddingBottom: 40 },
     formRow: { flexDirection: 'row', gap: 12 },
     groupTitle: { fontSize: 16, fontWeight: '700', marginVertical: 12, color: c.textDarker },

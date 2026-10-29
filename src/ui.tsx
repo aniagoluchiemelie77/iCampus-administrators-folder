@@ -19,7 +19,8 @@ import {
   View,
   ViewStyle,
 } from 'react-native';
-import { Colors, makeStyles, PRIMARY_COLOR, TIER_COLORS, useColors } from './theme';
+import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
+import { Colors, makeStyles, PRIMARY_COLOR, TIER_COLORS, useColors, useThemeMode } from './theme';
 import { Icon, IconName } from './icons';
 import { Logo } from './Logo';
 import { useNavigation } from './context';
@@ -94,24 +95,28 @@ export function Button({
   icon?: IconName;
   disabled?: boolean;
   loading?: boolean;
-  variant?: 'primary' | 'outline' | 'success';
+  variant?: 'primary' | 'outline' | 'success' | 'soft';
   style?: StyleProp<ViewStyle>;
   compact?: boolean;
 }) {
   const colors = useColors();
   const outline = variant === 'outline';
-  const background = outline ? 'transparent' : variant === 'success' ? colors.success : colors.btnColor;
-  const foreground = outline ? colors.primary : colors.btnTextColor;
+  const soft = variant === 'soft';
+  const background = outline ? 'transparent' : soft ? colors.primary + '17' : variant === 'success' ? colors.success : colors.btnColor;
+  const foreground = outline || soft ? colors.primary : colors.btnTextColor;
   return (
     <Pressable
       accessibilityRole="button"
       onPress={onPress}
       disabled={disabled || loading}
-      style={({ pressed }) => [
+      style={({ pressed, hovered }: any) => [
         uiStyles.button,
         compact && uiStyles.buttonCompact,
-        { backgroundColor: background, borderColor: colors.primary, borderWidth: outline ? 1 : 0 },
-        { opacity: disabled ? 0.6 : 1, transform: [{ scale: pressed && !disabled ? 0.96 : 1 }] },
+        { backgroundColor: background, borderColor: colors.primary + '99', borderWidth: outline ? 1 : 0 },
+        !outline && !soft && uiStyles.buttonRaised,
+        hovered && !disabled && { opacity: 0.9 },
+        { transform: [{ scale: pressed && !disabled ? 0.97 : 1 }] },
+        disabled && { opacity: 0.55 },
         style,
       ]}
     >
@@ -133,14 +138,22 @@ export function IconButton({
   label,
   color,
   disabled = false,
+  filled = false,
+  size = 22,
+  style,
 }: {
   icon: IconName;
   onPress: () => void;
   label: string;
   color?: string;
   disabled?: boolean;
+  /** Tinted square background instead of a bare icon. */
+  filled?: boolean;
+  size?: number;
+  style?: StyleProp<ViewStyle>;
 }) {
   const colors = useColors();
+  const tone = color ?? colors.primary;
   return (
     <Pressable
       accessibilityRole="button"
@@ -149,11 +162,14 @@ export function IconButton({
       onPress={onPress}
       style={({ pressed, hovered }: any) => [
         uiStyles.iconButton,
-        (pressed || hovered) && { backgroundColor: colors.primary + '14' },
+        filled && [uiStyles.iconButtonFilled, { backgroundColor: tone + '14' }],
+        (pressed || hovered) && { backgroundColor: tone + (filled ? '26' : '14') },
+        pressed && { transform: [{ scale: 0.94 }] },
         disabled && { opacity: 0.5 },
+        style,
       ]}
     >
-      <Icon name={icon} size={22} color={color ?? colors.primary} />
+      <Icon name={icon} size={size} color={tone} />
     </Pressable>
   );
 }
@@ -221,15 +237,15 @@ export const noOutline = { outlineStyle: 'none' } as unknown as TextStyle;
 const useFieldStyles = makeStyles(c =>
   StyleSheet.create({
     field: { marginBottom: 16 },
-    label: { color: c.text, fontSize: 14, fontWeight: '600', marginBottom: 8 },
+    label: { color: c.textDarker, fontSize: 13, fontWeight: '700', marginBottom: 8 },
     inputRow: {
       flexDirection: 'row',
       alignItems: 'center',
       minHeight: 50,
-      borderWidth: 0.8,
-      borderColor: c.border,
-      borderRadius: 8,
-      paddingHorizontal: 12,
+      borderWidth: 1,
+      borderColor: c.borderSubtle,
+      borderRadius: 12,
+      paddingHorizontal: 14,
       backgroundColor: c.background,
     },
     multilineRow: { alignItems: 'flex-start', paddingVertical: 10 },
@@ -270,7 +286,7 @@ export function OptionPicker<T extends string>({
               onPress={() => onChange(option.value)}
               style={[
                 uiStyles.chip,
-                { borderColor: active ? colors.primary : colors.border },
+                { borderColor: active ? colors.primary : colors.borderSubtle, backgroundColor: colors.backgroundSecondary },
                 active && { backgroundColor: colors.primary },
               ]}
             >
@@ -311,24 +327,28 @@ export function ToggleRow({
   );
 }
 
-/** Horizontal tab strip with the iCampus underline indicator. */
+/** Horizontal segmented tab strip; scrolls sideways when the tabs overflow. */
 export function TabStrip<T extends string>({
   tabs,
   active,
   onChange,
   uppercase = false,
+  style,
 }: {
-  tabs: ReadonlyArray<{ id: T; label: string; badge?: number }>;
+  tabs: ReadonlyArray<{ id: T; label: string; badge?: number; icon?: IconName }>;
   active: T;
   onChange: (tab: T) => void;
   uppercase?: boolean;
+  style?: StyleProp<ViewStyle>;
 }) {
   const colors = useColors();
   return (
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
-      style={[uiStyles.tabStrip, { backgroundColor: colors.backgroundSecondary }]}
+      // flexShrink 0: on web a horizontal ScrollView shrinks by default, so a long
+      // result list below it squeezed the strip down to a sliver.
+      style={[uiStyles.tabStrip, { backgroundColor: colors.backgroundSecondary, borderColor: colors.borderSubtle }, style]}
       contentContainerStyle={uiStyles.tabStripContent}
     >
       {tabs.map(tab => {
@@ -339,16 +359,86 @@ export function TabStrip<T extends string>({
             accessibilityState={{ selected }}
             key={tab.id}
             onPress={() => onChange(tab.id)}
-            style={[uiStyles.tab, { borderBottomColor: selected ? colors.primary : 'transparent' }]}
+            style={({ hovered }: any) => [
+              uiStyles.tab,
+              selected ? { backgroundColor: colors.primary } : hovered && { backgroundColor: colors.primary + '12' },
+            ]}
           >
-            <Text style={[uiStyles.tabText, { color: selected ? colors.primary : colors.text }]}>
+            {tab.icon ? <Icon name={tab.icon} size={17} color={selected ? colors.btnTextColor : colors.textMuted} /> : null}
+            <Text style={[uiStyles.tabText, { color: selected ? colors.btnTextColor : colors.text }]}>
               {uppercase ? tab.label.toUpperCase() : tab.label}
             </Text>
-            {tab.badge ? <CountBadge count={tab.badge} /> : null}
+            {tab.badge ? <CountBadge count={tab.badge} style={selected ? { backgroundColor: '#ffffff33' } : undefined} /> : null}
           </Pressable>
         );
       })}
     </ScrollView>
+  );
+}
+
+/** Animated sun / moon switch for the light and dark themes. */
+export function ThemeToggle({ showLabel = false }: { showLabel?: boolean }) {
+  const colors = useColors();
+  const { scheme, toggle } = useThemeMode();
+  const dark = scheme === 'dark';
+  const progress = useRef(new Animated.Value(dark ? 1 : 0)).current;
+  useEffect(() => {
+    Animated.spring(progress, { toValue: dark ? 1 : 0, useNativeDriver: false, friction: 7, tension: 90 }).start();
+  }, [dark, progress]);
+  const knobX = progress.interpolate({ inputRange: [0, 1], outputRange: [3, 29] });
+  const spin = progress.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
+  const track = progress.interpolate({ inputRange: [0, 1], outputRange: ['#f9d8c8', '#34343c'] });
+  return (
+    <Pressable
+      accessibilityRole="switch"
+      accessibilityState={{ checked: dark }}
+      accessibilityLabel="Dark theme"
+      onPress={toggle}
+      style={({ hovered }: any) => [uiStyles.themeToggle, showLabel && uiStyles.themeToggleWide, showLabel && hovered && { backgroundColor: colors.primary + '0D' }]}
+    >
+      {showLabel ? (
+        <View style={uiStyles.themeToggleText}>
+          <Icon name={dark ? 'dark-mode' : 'light-mode'} size={20} color={colors.text} />
+          <Text style={[uiStyles.themeToggleLabel, { color: colors.text }]}>{dark ? 'Dark mode' : 'Light mode'}</Text>
+        </View>
+      ) : null}
+      <Animated.View style={[uiStyles.themeTrack, { backgroundColor: track }]}>
+        <Animated.View style={[uiStyles.themeKnob, { transform: [{ translateX: knobX }, { rotate: spin }] }]}>
+          <Icon name={dark ? 'nightlight-round' : 'wb-sunny'} size={14} color={dark ? '#3b3b48' : PRIMARY_COLOR} />
+        </Animated.View>
+      </Animated.View>
+    </Pressable>
+  );
+}
+
+let shadeCount = 0;
+
+/** Transparent-to-dark vertical fade for text laid over photos. */
+export function GradientShade({ from = 0, to = 0.8, style }: { from?: number; to?: number; style?: StyleProp<ViewStyle> }) {
+  const id = useRef(`shade-${++shadeCount}`).current;
+  return (
+    <View pointerEvents="none" style={[StyleSheet.absoluteFill, style]}>
+      <Svg width="100%" height="100%" preserveAspectRatio="none">
+        <Defs>
+          <LinearGradient id={id} x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0" stopColor="#000" stopOpacity={from} />
+            <Stop offset="0.5" stopColor="#000" stopOpacity={from + (to - from) * 0.3} />
+            <Stop offset="1" stopColor="#000" stopOpacity={to} />
+          </LinearGradient>
+        </Defs>
+        <Rect x="0" y="0" width="100%" height="100%" fill={`url(#${id})`} />
+      </Svg>
+    </View>
+  );
+}
+
+/** Small rounded label, e.g. a role or status. */
+export function Pill({ label, color, icon, solid = false }: { label: string; color: string; icon?: IconName; solid?: boolean }) {
+  return (
+    <View style={[uiStyles.pill, { backgroundColor: solid ? color : color + '1A' }]}>
+      {icon ? <Icon name={icon} size={13} color={solid ? '#fff' : color} /> : null}
+      <Text numberOfLines={1} style={[uiStyles.pillText, { color: solid ? '#fff' : color }]}>{label}</Text>
+    </View>
   );
 }
 
@@ -380,31 +470,65 @@ export function PageHeader({
   const colors = useColors();
   const { pop } = useNavigation();
   return (
-    <View style={[uiStyles.pageHeader, { backgroundColor: colors.backgroundSecondary }]}>
+    <View style={[uiStyles.pageHeader, { backgroundColor: colors.backgroundSecondary, borderColor: colors.borderSubtle }]}>
       <View style={uiStyles.pageHeaderSide}>
-        {back ? <IconButton icon="chevron-left" label="Go back" onPress={pop} /> : null}
+        {back ? <IconButton filled icon="arrow-back" size={20} label="Go back" onPress={pop} /> : null}
       </View>
       <View style={uiStyles.pageHeaderCenter}>
-        <Text numberOfLines={1} style={[uiStyles.pageHeaderTitle, { color: colors.primary }]}>{title}</Text>
-        {subtitle ? <Text numberOfLines={1} style={[uiStyles.pageHeaderSubtitle, { color: colors.text }]}>{subtitle}</Text> : null}
+        <Text numberOfLines={1} style={[uiStyles.pageHeaderTitle, { color: colors.textDarker }]}>{title}</Text>
+        {subtitle ? <Text numberOfLines={1} style={[uiStyles.pageHeaderSubtitle, { color: colors.textMuted }]}>{subtitle}</Text> : null}
       </View>
-      <View style={[uiStyles.pageHeaderSide, uiStyles.pageHeaderRight]}>{right ?? <Logo size={44} />}</View>
+      <View style={[uiStyles.pageHeaderSide, uiStyles.pageHeaderRight]}>{right ?? <Logo size={38} />}</View>
     </View>
   );
 }
 
 export function Card({ children, style }: { children: React.ReactNode; style?: StyleProp<ViewStyle> }) {
   const colors = useColors();
-  return <View style={[uiStyles.card, { backgroundColor: colors.backgroundSecondary }, style]}>{children}</View>;
+  return (
+    <View style={[uiStyles.card, { backgroundColor: colors.backgroundSecondary, borderColor: colors.borderSubtle, shadowColor: colors.shadow }, style]}>
+      {children}
+    </View>
+  );
 }
 
-/** Section title with an optional "View All" button, as on the iCampus dashboard. */
-export function SectionHeader({ title, onViewAll }: { title: string; onViewAll?: () => void }) {
+/** Section title with an optional icon, subtitle and "View all" link. */
+export function SectionHeader({
+  title,
+  subtitle,
+  icon,
+  onViewAll,
+  right,
+}: {
+  title: string;
+  subtitle?: string;
+  icon?: IconName;
+  onViewAll?: () => void;
+  right?: React.ReactNode;
+}) {
   const colors = useColors();
   return (
     <View style={uiStyles.sectionHeader}>
-      <Text style={[uiStyles.sectionTitle, { color: colors.text }]}>{title}</Text>
-      {onViewAll ? <Button compact title="View All" onPress={onViewAll} style={uiStyles.viewAll} /> : null}
+      {icon ? (
+        <View style={[uiStyles.sectionIcon, { backgroundColor: colors.primary + '17' }]}>
+          <Icon name={icon} size={18} color={colors.primary} />
+        </View>
+      ) : null}
+      <View style={uiStyles.sectionText}>
+        <Text numberOfLines={1} style={[uiStyles.sectionTitle, { color: colors.textDarker }]}>{title}</Text>
+        {subtitle ? <Text numberOfLines={1} style={[uiStyles.sectionSubtitle, { color: colors.textMuted }]}>{subtitle}</Text> : null}
+      </View>
+      {right}
+      {onViewAll ? (
+        <Pressable
+          accessibilityRole="button"
+          onPress={onViewAll}
+          style={({ hovered }: any) => [uiStyles.viewAll, { backgroundColor: colors.primary + (hovered ? '1F' : '12') }]}
+        >
+          <Text style={[uiStyles.viewAllText, { color: colors.primary }]}>View all</Text>
+          <Icon name="arrow-forward" size={15} color={colors.primary} />
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -712,11 +836,13 @@ export const severityColor = (severity: string | undefined, colors: Colors) =>
   })[severity ?? ''] ?? colors.text;
 
 const uiStyles = StyleSheet.create({
-  button: { minHeight: 50, borderRadius: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 },
-  buttonCompact: { minHeight: 38, paddingHorizontal: 12, borderRadius: 8 },
+  button: { minHeight: 48, borderRadius: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 18 },
+  buttonCompact: { minHeight: 38, paddingHorizontal: 14, borderRadius: 10 },
+  buttonRaised: { shadowColor: PRIMARY_COLOR, shadowOpacity: 0.28, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 3 },
   buttonIcon: { marginRight: 7 },
   buttonText: { fontSize: 14, fontWeight: 'bold' },
-  iconButton: { padding: 8, borderRadius: 20 },
+  iconButton: { padding: 8, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  iconButtonFilled: { width: 38, height: 38, padding: 0, borderRadius: 11 },
   picker: { marginBottom: 16 },
   pickerLabel: { fontSize: 14, fontWeight: '600', marginBottom: 6 },
   pickerHint: { fontSize: 12, opacity: 0.8, marginBottom: 8, lineHeight: 17 },
@@ -725,22 +851,53 @@ const uiStyles = StyleSheet.create({
   chipText: { fontSize: 13, fontWeight: '600' },
   toggleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 5, marginBottom: 15, gap: 12 },
   toggleText: { fontSize: 14, flex: 1 },
-  tabStrip: { flexGrow: 0, marginBottom: 15, borderRadius: 12 },
-  tabStripContent: { paddingHorizontal: 10, alignItems: 'center' },
-  tab: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 10, paddingHorizontal: 14, borderBottomWidth: 3, marginRight: 4 },
-  tabText: { fontSize: 14, fontWeight: '600' },
+  tabStrip: { flexGrow: 0, flexShrink: 0, marginBottom: 16, borderRadius: 14, borderWidth: 1 },
+  tabStripContent: { padding: 5, gap: 4, alignItems: 'center', flexGrow: 1 },
+  tab: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, paddingVertical: 9, paddingHorizontal: 16, borderRadius: 10, minHeight: 38 },
+  tabText: { fontSize: 13.5, fontWeight: '700' },
+  themeToggle: { flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 12 },
+  themeToggleWide: { paddingVertical: 9, paddingHorizontal: 12 },
+  themeToggleText: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  themeToggleLabel: { fontSize: 14, fontWeight: '600' },
+  themeTrack: { width: 56, height: 30, borderRadius: 15, justifyContent: 'center' },
+  themeKnob: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#fff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 1 },
+  },
+  pill: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: 4, paddingHorizontal: 9, paddingVertical: 4, borderRadius: 999, maxWidth: '100%' },
+  pillText: { fontSize: 11, fontWeight: '800', letterSpacing: 0.3 },
   countBadge: { minWidth: 18, height: 18, borderRadius: 9, paddingHorizontal: 4, alignItems: 'center', justifyContent: 'center' },
   countBadgeText: { fontSize: 10, fontWeight: 'bold' },
-  pageHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, marginBottom: 20 },
+  pageHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, marginBottom: 20, borderRadius: 16, borderWidth: 1 },
   pageHeaderSide: { minWidth: 48, justifyContent: 'center' },
   pageHeaderRight: { alignItems: 'flex-end' },
   pageHeaderCenter: { flex: 1, alignItems: 'center', paddingHorizontal: 10 },
-  pageHeaderTitle: { fontSize: 18, fontWeight: 'bold', textAlign: 'center' },
-  pageHeaderSubtitle: { fontSize: 11, textAlign: 'center', marginTop: 2 },
-  card: { padding: 15, borderRadius: 15, marginBottom: 15 },
-  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 12 },
-  sectionTitle: { fontSize: 18, fontWeight: 'bold', flex: 1 },
-  viewAll: { paddingHorizontal: 15 },
+  pageHeaderTitle: { fontSize: 17, fontWeight: '800', textAlign: 'center' },
+  pageHeaderSubtitle: { fontSize: 12, textAlign: 'center', marginTop: 2 },
+  card: {
+    padding: 20,
+    borderRadius: 20,
+    marginBottom: 16,
+    borderWidth: 1,
+    shadowOpacity: 0.04,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 4 },
+  },
+  sectionHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 16, gap: 12 },
+  sectionIcon: { width: 36, height: 36, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+  sectionText: { flex: 1, minWidth: 0 },
+  sectionTitle: { fontSize: 17, fontWeight: '800' },
+  sectionSubtitle: { fontSize: 12.5, marginTop: 2 },
+  viewAll: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 7, paddingHorizontal: 12, borderRadius: 999 },
+  viewAllText: { fontSize: 13, fontWeight: '700' },
   loading: { padding: 24, alignItems: 'center', gap: 12 },
   loadingText: { fontSize: 14 },
   avatarFallback: { backgroundColor: PRIMARY_COLOR, alignItems: 'center', justifyContent: 'center' },
@@ -771,8 +928,8 @@ const uiStyles = StyleSheet.create({
   emptyButton: { marginTop: 20, paddingHorizontal: 20 },
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end', alignItems: 'center' },
   overlayCentered: { justifyContent: 'center', padding: 16 },
-  sheet: { width: '100%', borderTopLeftRadius: 25, borderTopRightRadius: 25 },
-  dialog: { width: '100%', borderRadius: 20 },
+  sheet: { width: '100%', borderTopLeftRadius: 28, borderTopRightRadius: 28 },
+  dialog: { width: '100%', borderRadius: 24 },
   sheetContent: { padding: 25 },
   confirm: { alignItems: 'center' },
   confirmTitle: { fontSize: 18, fontWeight: 'bold', marginVertical: 20, textAlign: 'center' },

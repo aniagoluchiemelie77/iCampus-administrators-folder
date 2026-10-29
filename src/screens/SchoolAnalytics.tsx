@@ -27,7 +27,7 @@ const weekLabel = (week: string) => {
 function Section({ title, icon, badge, children }: { title: string; icon: IconName; badge?: string; children: React.ReactNode }) {
   const colors = useColors();
   return (
-    <View style={[s.card, { backgroundColor: colors.backgroundSecondary }]}>
+    <View style={[s.card, { backgroundColor: colors.backgroundSecondary, borderColor: colors.borderSubtle }]}>
       <View style={s.sectionHead}>
         <Icon name={icon} size={18} color={colors.primary} />
         <Text style={[s.sectionTitle, { color: colors.textDarker }]}>{title}</Text>
@@ -127,7 +127,7 @@ export function SchoolAnalyticsView({ metrics }: { metrics: Record<string, any> 
 
   return (
     <View style={s.container}>
-      <View style={[s.card, s.header, { backgroundColor: colors.backgroundSecondary }]}>
+      <View style={[s.card, s.header, { backgroundColor: colors.backgroundSecondary, borderColor: colors.borderSubtle }]}>
         <View style={{ flex: 1 }}>
           <Text numberOfLines={2} style={[s.schoolName, { color: colors.textDarker }]}>{inst?.name || 'Your institution'}</Text>
           <Text style={[s.meta, { color: colors.text }]}>Updated {metrics.generatedAt ? fromNow(metrics.generatedAt) : 'just now'}</Text>
@@ -371,7 +371,7 @@ export function SchoolAdminDashboardView({ metrics }: { metrics: Record<string, 
       </View>
 
       <Text style={[s.legacyHeader, { color: colors.textDarker }]}>Onboarding Trends</Text>
-      <View style={[s.card, { backgroundColor: colors.backgroundSecondary }]}>
+      <View style={[s.card, { backgroundColor: colors.backgroundSecondary, borderColor: colors.borderSubtle }]}>
         {(['students', 'lecturers'] as const).map((key, index) => (
           <View key={key}>
             {index > 0 ? <View style={s.divider} /> : null}
@@ -391,7 +391,7 @@ export function SchoolAdminDashboardView({ metrics }: { metrics: Record<string, 
         <StatusCard label="Assigned Courses" count={String(courses?.allocationStatus?.assigned ?? 0)} color={colors.success} icon="check-circle" />
         <StatusCard label="Unassigned / Pending" count={String(courses?.allocationStatus?.unassigned ?? 0)} color={colors.pendingDelivery} icon="warning" />
       </View>
-      <View style={[s.card, { backgroundColor: colors.backgroundSecondary }]}>
+      <View style={[s.card, { backgroundColor: colors.backgroundSecondary, borderColor: colors.borderSubtle }]}>
         {(
           [
             ['assignment', 'Total Assessments Created', academics?.totalAssessmentsCreated, colors.text],
@@ -408,7 +408,7 @@ export function SchoolAdminDashboardView({ metrics }: { metrics: Record<string, 
       </View>
 
       <Text style={[s.legacyHeader, { color: colors.textDarker }]}>Courses by Department</Text>
-      <View style={[s.card, { backgroundColor: colors.backgroundSecondary }]}>
+      <View style={[s.card, { backgroundColor: colors.backgroundSecondary, borderColor: colors.borderSubtle }]}>
         {departments.length === 0 ? (
           <Text style={[s.emptyText, { color: colors.text }]}>No department data available.</Text>
         ) : (
@@ -429,8 +429,8 @@ export function SchoolAdminDashboardView({ metrics }: { metrics: Record<string, 
 
 const s = StyleSheet.create({
   container: { paddingBottom: 30 },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 12 },
-  card: { borderRadius: 18, padding: 14, marginBottom: 12 },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 16 },
+  card: { borderRadius: 20, padding: 20, marginBottom: 16, borderWidth: 1 },
   gridItem: { flexGrow: 1, flexBasis: 320 },
   header: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   schoolName: { fontSize: 17, fontWeight: '800' },
