@@ -185,10 +185,13 @@ export const loginAdmin = async (identifier: string, password: string) => {
   };
 };
 
-export const getAdminMetrics = (department?: string | null) =>
-  request<Record<string, any>>(
-    `admins/get-overview${department ? `?${new URLSearchParams({ department })}` : ''}`,
-  );
+export const getAdminMetrics = (department?: string | null, session?: string | null) => {
+  const params = new URLSearchParams();
+  if (department) params.set('department', department);
+  if (session) params.set('session', session);
+  const query = params.toString();
+  return request<Record<string, any>>(`admins/get-overview${query ? `?${query}` : ''}`);
+};
 
 // ---------------------------------------------------------------------------
 // School administrators. The server pins department reps to their own
@@ -227,10 +230,11 @@ export type Page<T> = { items: T[]; total: number; page: number; totalPages: num
 
 export const getSchoolSection = (
   section: string,
-  options: { department?: string | null; page?: number; q?: string; filter?: string } = {},
+  options: { department?: string | null; page?: number; q?: string; filter?: string; session?: string | null } = {},
 ) => {
   const params = new URLSearchParams({ page: String(options.page ?? 1), limit: String(LIST_PAGE_SIZE) });
   if (options.department) params.set('department', options.department);
+  if (options.session) params.set('session', options.session);
   if (options.q) params.set('q', options.q);
   if (options.filter) params.set('filter', options.filter);
   return request<Page<Record<string, any>> & Record<string, any>>(
@@ -273,6 +277,7 @@ export const sendSchoolNotification = (notification: {
   message: string;
   audiences: SchoolAudience[];
   department?: string | null;
+  attachments?: Attachment[];
 }) =>
   request<{ message: string; announcement: Record<string, any> }>('admins/school/notifications', {
     method: 'POST',
@@ -586,3 +591,158 @@ export const uploadAttachment = async (file: File) => {
   }
   return result.secure_url as string;
 };
+
+// ---------------------------------------------------------------------------
+// Exports. The server emails a branded Excel workbook to the signed-in admin's own address.
+// ---------------------------------------------------------------------------
+
+export type ExportResult = { message: string; rows: number; sentTo: string };
+
+export const exportSchoolData = (options: { section: string; department?: string | null; level?: string | null; session?: string | null }) =>
+  request<ExportResult>('admins/school/exports', { method: 'POST', body: JSON.stringify(options) });
+
+export const exportFinanceData = (options: {
+  sections: string[];
+  year?: number;
+  period?: number | 'all';
+  status?: string;
+}) => request<ExportResult>('admins/finance/export', { method: 'POST', body: JSON.stringify(options) });
+
+// ---------------------------------------------------------------------------
+// School users (students and lecturers by department and level)
+// ---------------------------------------------------------------------------
+
+export type SchoolUsersResult = Page<Record<string, any>> & {
+  role: 'students' | 'lecturers';
+  level: string | null;
+  scope: { department: string | null; departments: string[]; locked: boolean };
+  breakdown: {
+    totals: { students: number; lecturers: number; verified: number; suspended: number };
+    byDepartment: Array<{ department: string; students: number; lecturers: number }>;
+    byLevel: Array<{ level: string; students: number }>;
+  };
+};
+
+export const getSchoolUsers = (options: {
+  role: 'students' | 'lecturers';
+  department?: string | null;
+  level?: string | null;
+  q?: string;
+  page?: number;
+}) => {
+  const params = new URLSearchParams({ role: options.role, page: String(options.page ?? 1), limit: String(LIST_PAGE_SIZE) });
+  if (options.department) params.set('department', options.department);
+  if (options.level) params.set('level', options.level);
+  if (options.q) params.set('q', options.q);
+  return request<SchoolUsersResult>(`admins/school/users?${params}`);
+};
+
+// ---------------------------------------------------------------------------
+// Finance
+// ---------------------------------------------------------------------------
+
+export type FinancePeriod = number | 'all';
+export type FinanceSectionId = 'transactions' | 'orders' | 'sellers' | 'products' | 'subscribers' | 'payments' | 'schools';
+
+const periodParams = (options: { year?: number; period?: FinancePeriod; currency?: string }) => {
+  const params = new URLSearchParams();
+  if (options.year) params.set('year', String(options.year));
+  if (options.period) params.set('period', String(options.period));
+  if (options.currency) params.set('currency', options.currency);
+  return params;
+};
+
+export const getFinanceOverview = (options: { year?: number; period?: FinancePeriod; currency?: string } = {}) =>
+  request<Record<string, any>>(`admins/finance/overview?${periodParams(options)}`);
+
+export const getFinanceSection = (
+  section: FinanceSectionId,
+  options: { year?: number; period?: FinancePeriod; status?: string; q?: string; page?: number } = {},
+) => {
+  const params = periodParams(options);
+  params.set('page', String(options.page ?? 1));
+  params.set('limit', String(LIST_PAGE_SIZE));
+  if (options.status) params.set('status', options.status);
+  if (options.q) params.set('q', options.q);
+  return request<Page<Record<string, any>> & { period: Record<string, any> | null }>(
+    `admins/finance/sections/${section}?${params}`,
+  );
+};
+
+export const updateSchoolBilling = (
+  id: string,
+  billing: { amount?: number; currency?: string; cycle?: string; nextPaymentDue?: string | null; note?: string; markPaid?: boolean },
+) =>
+  request<{ message: string; school: Record<string, any> }>(`admins/finance/schools/${encodeURIComponent(id)}/billing`, {
+    method: 'PATCH',
+    headers: { 'X-Idempotency-Key': idempotencyKey() },
+    body: JSON.stringify(billing),
+  });
+
+// ---------------------------------------------------------------------------
+// Super admin and support
+// ---------------------------------------------------------------------------
+
+export const getPlatformOverview = () => request<Record<string, any>>('admins/platform/overview');
+export const getSupportOverview = () => request<Record<string, any>>('admins/support/overview');
+
+export type DirectoryAdmin = AdminUser & {
+  schoolName?: string;
+  schoolLogo?: string | null;
+  tier?: string;
+  tierLabel?: string;
+  bRepsAdded?: number;
+  bRepsLimit?: number | null;
+  billingStatus?: string;
+};
+
+export const getAdminDirectory = () =>
+  request<{ admins: DirectoryAdmin[]; schoolAdmins: DirectoryAdmin[]; departmentReps: number }>('admins/platform/directory');
+
+export const getAdminProfile = (uid: string) =>
+  request<Record<string, any>>(`admins/platform/admins/${encodeURIComponent(uid)}`);
+
+export const getAdminActivity = (options: { actorUid?: string; role?: string; page?: number } = {}) => {
+  const params = new URLSearchParams({ page: String(options.page ?? 1), limit: String(LIST_PAGE_SIZE) });
+  if (options.actorUid) params.set('actorUid', options.actorUid);
+  if (options.role) params.set('role', options.role);
+  return request<Page<Record<string, any>>>(`admins/platform/activity?${params}`);
+};
+
+export type OutgoingMessage = { title: string; message: string; attachments?: Attachment[] };
+
+export const notifyAdmins = (message: OutgoingMessage & { uids?: string[]; roles?: string[] }) =>
+  request<{ message: string; delivered: number }>('admins/platform/notify-admins', {
+    method: 'POST',
+    headers: { 'X-Idempotency-Key': idempotencyKey() },
+    body: JSON.stringify(message),
+  });
+
+export type UserAudience = 'users' | 'school' | 'usertype' | 'all';
+
+export const notifyUsers = (
+  message: OutgoingMessage & { target: UserAudience; uids?: string[]; schoolCode?: string; usertype?: string },
+) =>
+  request<{ message: string; broadcast: Record<string, any> }>('admins/notify-users', {
+    method: 'POST',
+    headers: { 'X-Idempotency-Key': idempotencyKey() },
+    body: JSON.stringify(message),
+  });
+
+export const getBroadcasts = (page = 1) =>
+  request<Page<Record<string, any>>>(`admins/support/broadcasts?page=${page}&limit=${LIST_PAGE_SIZE}`);
+
+export const getAdminInbox = (page = 1) =>
+  request<Page<Record<string, any>>>(`admins/inbox?page=${page}&limit=${LIST_PAGE_SIZE}`);
+
+// ---------------------------------------------------------------------------
+// Social media (daily snapshots of the iCampus accounts)
+// ---------------------------------------------------------------------------
+
+export const getSocialOverview = (days = 90) => request<Record<string, any>>(`admins/social/overview?days=${days}`);
+
+export const refreshSocialStats = () =>
+  request<{ message: string; results: Array<{ platform: string; ok: boolean; error?: string }> }>('admins/social/refresh', { method: 'POST' });
+
+export const exportSocialData = (days: number) =>
+  request<ExportResult>('admins/social/export', { method: 'POST', body: JSON.stringify({ days }) });

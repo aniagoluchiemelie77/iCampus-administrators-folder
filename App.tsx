@@ -19,6 +19,11 @@ import { AdminFab } from './src/Fab';
 import { Icon, IconName } from './src/icons';
 import { Logo } from './src/Logo';
 import { ActivityLogs } from './src/screens/ActivityLogs';
+import { AdminActivityScreen, AdminDetail, MessageAdmins, SuperAccessControl } from './src/screens/AccessControl';
+import { FinanceOverview, FinanceSection, SchoolBillingTab } from './src/screens/Finance';
+import { SchoolUsers } from './src/screens/SchoolUsers';
+import { SocialOverview } from './src/screens/Social';
+import { StaffNotifications } from './src/screens/StaffNotifications';
 import { AdminForm, AdminManagement } from './src/screens/Admins';
 import { Login } from './src/screens/Login';
 import { AdForm, AdsList, InstitutionForm, InstitutionsList, StationForm, StationsList, TaxEntries } from './src/screens/Manage';
@@ -34,6 +39,9 @@ import { ConfirmModal, formatLabel, IconButton, ScreenTransition, TabStrip, Them
 
 const TAB_META: Record<Tab, { icon: IconName; description: string }> = {
   Overview: { icon: 'dashboard', description: 'Platform health, finance and institution activity at a glance.' },
+  Finance: { icon: 'insights', description: 'Orders, subscriptions and school billing, in four-month periods.' },
+  'Social Media': { icon: 'share', description: 'Followers, posts and impressions across the iCampus social accounts.' },
+  Users: { icon: 'people-alt', description: 'Your students and lecturers by department and level.' },
   Tickets: { icon: 'support-agent', description: 'Review support tickets, user context and resolutions.' },
   'Security Alerts': { icon: 'security', description: 'Security-related activity recorded by the platform.' },
   Financial: { icon: 'account-balance', description: 'Financial activity recorded by the platform.' },
@@ -46,19 +54,28 @@ const TAB_META: Record<Tab, { icon: IconName; description: string }> = {
   Institutions: { icon: 'school', description: 'Manage the iCampus network of authorized institutions.' },
   'Drop-off Stations': { icon: 'storefront', description: 'Manage authorized parcel drop-off locations.' },
   Advertisements: { icon: 'campaign', description: 'Manage iCampus advertisement banners.' },
+  'School Billing': { icon: 'request-quote', description: "Each institution's plan and when its next payment is due." },
   'Tax Entries': { icon: 'receipt-long', description: 'All recorded tax transactions and monthly reports.' },
 };
 
-function TabContent({ tab, schoolAdmin }: { tab: Tab; schoolAdmin: boolean }) {
+function TabContent({ tab, schoolAdmin, superAdmin }: { tab: Tab; schoolAdmin: boolean; superAdmin: boolean }) {
   const category = LOG_CATEGORIES[tab];
   if (category) return <ActivityLogs key={tab} category={category} label={tab} />;
   switch (tab) {
+    case 'Finance':
+      return <FinanceOverview />;
+    case 'Social Media':
+      return <SocialOverview />;
+    case 'Users':
+      return <SchoolUsers />;
+    case 'School Billing':
+      return <SchoolBillingTab />;
     case 'Tickets':
       return <TicketsSection />;
     case 'Access Control':
-      return schoolAdmin ? <SchoolReps /> : <AdminManagement />;
+      return schoolAdmin ? <SchoolReps /> : superAdmin ? <SuperAccessControl /> : <AdminManagement />;
     case 'Notifications':
-      return <SchoolNotifications />;
+      return schoolAdmin ? <SchoolNotifications /> : <StaffNotifications />;
     case 'Institutions':
       return <InstitutionsList />;
     case 'Drop-off Stations':
@@ -91,11 +108,19 @@ function RouteContent({ route }: { route: Route }) {
     case 'adForm':
       return <AdForm item={route.item} />;
     case 'schoolSection':
-      return <SchoolSection section={route.section} department={route.department ?? null} filter={route.filter} />;
+      return <SchoolSection section={route.section} department={route.department ?? null} filter={route.filter} session={route.session} />;
     case 'repForm':
       return <RepForm rep={route.rep} canInviteA={route.canInviteA} />;
     case 'auditLog':
       return <SchoolAuditLog />;
+    case 'financeSection':
+      return <FinanceSection section={route.section} status={route.status} year={route.year} period={route.period} />;
+    case 'adminDetail':
+      return <AdminDetail key={route.uid} uid={route.uid} />;
+    case 'adminActivity':
+      return <AdminActivityScreen actorUid={route.actorUid} title={route.title} />;
+    case 'messageAdmins':
+      return <MessageAdmins uids={route.uids} label={route.label} />;
   }
 }
 
@@ -105,7 +130,14 @@ const greeting = () => {
 };
 
 /** Title block at the top of each tab. */
-function PageIntro({ tab, firstname, schoolAdmin }: { tab: Tab; firstname?: string; schoolAdmin: boolean }) {
+const OVERVIEW_DESCRIPTIONS: Record<string, string> = {
+  finance: 'Orders, subscribers and school payments for the current four-month period.',
+  super_admin: 'Finance, users, schools, support and app health across iCampus.',
+  support: 'Tickets, the email inbox and accounts that need attention.',
+  social_media: 'How the iCampus social accounts are growing, platform by platform.',
+};
+
+function PageIntro({ tab, firstname, schoolAdmin, role }: { tab: Tab; firstname?: string; schoolAdmin: boolean; role: string }) {
   const styles = useStyles();
   const overview = tab === 'Overview';
   return (
@@ -121,7 +153,11 @@ function PageIntro({ tab, firstname, schoolAdmin }: { tab: Tab; firstname?: stri
           ? "Your institution's enrolment, lectures and performance at a glance."
           : schoolAdmin && tab === 'Access Control'
             ? "Your institution's representatives and their access."
-            : TAB_META[tab].description}
+            : !schoolAdmin && tab === 'Notifications'
+              ? 'Message app users and read notifications sent to you.'
+              : overview && OVERVIEW_DESCRIPTIONS[role]
+                ? OVERVIEW_DESCRIPTIONS[role]
+                : TAB_META[tab].description}
       </Text>
     </View>
   );
@@ -158,7 +194,7 @@ function Dashboard({ session, onLogout }: { session: AdminSession; onLogout: () 
   const route = stack[stack.length - 1];
   const fabRight = compact ? 16 : 32;
   const schoolAdmin = isSchoolAdmin(admin.adminType);
-  const intro = <PageIntro tab={tab} firstname={admin.firstname} schoolAdmin={schoolAdmin} />;
+  const intro = <PageIntro tab={tab} firstname={admin.firstname} schoolAdmin={schoolAdmin} role={admin.adminType} />;
   const roleLabel = isSchoolAdminA(admin.adminType)
     ? 'Institution Representative'
     : schoolAdmin
@@ -259,7 +295,7 @@ function Dashboard({ session, onLogout }: { session: AdminSession; onLogout: () 
                 {/* The overview scrolls its intro with the page; list tabs keep it pinned above their list. */}
                 {tab === 'Overview' ? null : intro}
                 <View style={styles.flex}>
-                  {tab === 'Overview' ? <Overview header={intro} /> : <TabContent tab={tab} schoolAdmin={schoolAdmin} />}
+                  {tab === 'Overview' ? <Overview header={intro} /> : <TabContent tab={tab} schoolAdmin={schoolAdmin} superAdmin={admin.adminType === 'super_admin'} />}
                 </View>
               </ScreenTransition>
             )}

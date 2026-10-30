@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { getSchoolSection } from '../api';
+import { exportSchoolData, getSchoolSection } from '../api';
+import { ExportButton } from '../dashboard';
 import { MeterRow } from '../charts';
 import { errorMessage, isSchoolAdminA, SchoolSectionId, useSession, useToast } from '../context';
 import { Icon, IconName } from '../icons';
 import { makeStyles, useColors } from '../theme';
-import { Button, EmptyState, Field, FilterChips, formatDate, fromNow, Loading, PageHeader, Pill, ScrollPage } from '../ui';
+import { Button, EmptyState, Field, FilterChips, formatCount, formatDate, fromNow, Loading, PageHeader, Pill, ScrollPage } from '../ui';
 
 const SECTION_META: Record<SchoolSectionId, { title: string; icon: IconName; empty: string }> = {
   courses: { title: 'Courses this session', icon: 'menu-book', empty: 'No courses for this session.' },
@@ -133,10 +134,13 @@ export function SchoolSection({
   section,
   department: initialDepartment,
   filter: initialFilter,
+  session,
 }: {
   section: SchoolSectionId;
   department: string | null;
   filter?: string;
+  /** The session the dashboard was showing; the list stays on it. */
+  session?: string;
 }) {
   const { admin } = useSession();
   const toast = useToast();
@@ -154,14 +158,14 @@ export function SchoolSection({
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setResult(await getSchoolSection(section, { department: canFilter ? department : null, page, q: search, filter }));
+      setResult(await getSchoolSection(section, { department: canFilter ? department : null, page, q: search, filter, session }));
     } catch (reason) {
       toast('error', errorMessage(reason), 'Fetch Error');
       setResult(previous => previous ?? { items: [], total: 0, page: 1, totalPages: 1 });
     } finally {
       setLoading(false);
     }
-  }, [canFilter, department, filter, page, search, section, toast]);
+  }, [canFilter, department, filter, page, search, section, session, toast]);
 
   useEffect(() => {
     void load();
@@ -182,7 +186,15 @@ export function SchoolSection({
     <View style={styles.flex}>
       <PageHeader
         title={meta.title}
-        subtitle={`${scopeLabel}${result?.session?.label ? ` · ${result.session.label} session` : ''}${result ? ` · ${Number(result.total).toLocaleString()} total` : ''}`}
+        subtitle={`${scopeLabel}${result?.session?.label ? ` · ${result.session.label} session` : ''}${result ? ` · ${formatCount(result.total)} total` : ''}`}
+        right={
+          <ExportButton
+            title={`Export ${meta.title.toLowerCase()}`}
+            scopeNote={scopeLabel}
+            options={[{ value: section, label: meta.title, personal: section === 'at-risk' || section === 'lecturers' }]}
+            onExport={() => exportSchoolData({ section, department: canFilter ? department : null, session: result?.session?.label ?? session })}
+          />
+        }
       />
       <ScrollPage contentContainerStyle={styles.content}>
         {canFilter && departments.length > 0 ? (

@@ -31,6 +31,7 @@ const ROLE_META: Record<string, { icon: IconName; tone: (c: Colors) => string }>
   support: { icon: 'support-agent', tone: c => c.info },
   moderator: { icon: 'gavel', tone: () => '#8e5cd9' },
   analyst: { icon: 'analytics', tone: () => '#0f9fa3' },
+  social_media: { icon: 'share', tone: () => '#d94c8a' },
   school_admin_a: { icon: 'account-balance', tone: c => c.pendingDelivery },
   school_admin_b: { icon: 'apartment', tone: c => c.info },
 };
@@ -40,26 +41,29 @@ const ROLE_LABELS: Record<string, string> = {
   school_admin_b: 'Department Rep (B)',
 };
 
-const roleMeta = (role: string | undefined, colors: Colors) => {
+export const roleMeta = (role: string | undefined, colors: Colors) => {
   const key = normalizeRole(role);
   const meta = ROLE_META[key] ?? { icon: 'person' as IconName, tone: (c: Colors) => c.textMuted };
   return { icon: meta.icon, tone: meta.tone(colors), label: ROLE_LABELS[key] ?? formatLabel(key || 'administrator') };
 };
 
-const fullName = (admin: AdminUser) => [admin.firstname, admin.lastname].filter(Boolean).join(' ') || 'Administrator';
+export const fullName = (admin: AdminUser) => [admin.firstname, admin.lastname].filter(Boolean).join(' ') || 'Administrator';
 
-function AdminCard({
+export function AdminCard({
   admin,
   isSelf,
   canManage,
   onEdit,
   onDelete,
+  onOpen,
 }: {
   admin: AdminUser;
   isSelf: boolean;
   canManage: boolean;
   onEdit: () => void;
   onDelete: () => void;
+  /** Opens the admin's detail screen. */
+  onOpen?: () => void;
 }) {
   const colors = useColors();
   const styles = useStyles();
@@ -69,7 +73,7 @@ function AdminCard({
   const hover = (toValue: number) => Animated.timing(lift, { toValue, duration: 180, useNativeDriver: true }).start();
 
   return (
-    <Pressable onHoverIn={() => hover(1)} onHoverOut={() => hover(0)} accessible={false}>
+    <Pressable onHoverIn={() => hover(1)} onHoverOut={() => hover(0)} onPress={onOpen} accessible={false}>
       <Animated.View
         style={[
           styles.card,
@@ -254,9 +258,15 @@ export function AdminManagement() {
   );
 }
 
+// Super admins create every admin type except department reps (B), whom
+// each school's institution rep adds from their own Access Control tab.
 const ROLE_OPTIONS = [
-  { value: 'moderator', label: 'Moderator' },
+  { value: 'super_admin', label: 'Super Admin' },
+  { value: 'finance', label: 'Finance' },
   { value: 'support', label: 'Support' },
+  { value: 'moderator', label: 'Moderator' },
+  { value: 'analyst', label: 'Analyst' },
+  { value: 'social_media', label: 'Social Media' },
   { value: 'school_admin_a', label: 'School Institution Rep (A)' },
 ] as const;
 
@@ -333,7 +343,7 @@ export function AdminForm({ admin }: { admin?: AdminUser }) {
           <OptionPicker
             label="Admin Role"
             value={form.adminType as (typeof ROLE_OPTIONS)[number]['value']}
-            options={ROLE_OPTIONS}
+            options={editing ? ROLE_OPTIONS.filter(option => option.value !== 'school_admin_a') : ROLE_OPTIONS}
             onChange={value => setForm({ ...form, adminType: value })}
             hint={schoolRep ? "The school's first representative, created when the contract is signed. They add the rest from their own Access Control tab." : undefined}
           />

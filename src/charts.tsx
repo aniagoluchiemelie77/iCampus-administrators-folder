@@ -394,6 +394,180 @@ export function Heatmap({ rows, columns, counts, color }: { rows: string[]; colu
   );
 }
 
+/**
+ * Stacked vertical bars: parts of a whole per category (e.g. physical vs
+ * online lectures per month). 2px surface gap between segments, rounded top,
+ * hover tooltip with every part and the total, legend below.
+ */
+export function StackedBarChart({
+  labels,
+  series,
+  height = 190,
+  unit = '',
+  formatValue,
+}: {
+  labels: string[];
+  series: ChartSeries[];
+  height?: number;
+  unit?: string;
+  formatValue?: (value: number) => string;
+}) {
+  const colors = useColors();
+  const styles = useChartStyles();
+  const { width, onLayout } = useMeasuredWidth();
+  const [hover, setHover] = useState<number | null>(null);
+  const show = (v: number | null) => (v == null ? '—' : formatValue ? formatValue(v) : fmt(v, unit));
+  const totals = labels.map((_, i) => series.reduce((sum, s) => sum + (s.values[i] ?? 0), 0));
+  const top = niceMax(Math.max(1, ...totals));
+  const axisWidth = 34;
+  const plot = height - 22;
+  return (
+    <View>
+      <View onLayout={onLayout} style={{ height }}>
+        {[0, 0.5, 1].map(f => (
+          <React.Fragment key={f}>
+            <View style={[styles.gridRule, { left: axisWidth, top: plot - plot * f, backgroundColor: colors.gridLine }]} />
+            <Text style={[styles.axisLabel, { top: plot - plot * f - 7, width: axisWidth - 6 }]}>{fmt(top * f)}</Text>
+          </React.Fragment>
+        ))}
+        <View style={[styles.bars, { height: plot, marginLeft: axisWidth, borderBottomColor: colors.gridLine }]}>
+          {labels.map((label, i) => (
+            <Pressable
+              key={`${label}-${i}`}
+              accessibilityLabel={`${label}: ${series.map(s => `${s.name} ${show(s.values[i])}`).join(', ')}`}
+              onHoverIn={() => setHover(i)}
+              onHoverOut={() => setHover(current => (current === i ? null : current))}
+              onPressIn={() => setHover(i)}
+              style={styles.barSlot}
+            >
+              <View style={[styles.stack, { opacity: hover === null || hover === i ? 1 : 0.45 }]}>
+                {/* Drawn top-down, so the first series ends up on the baseline. */}
+                {[...series].reverse().map((s, si, stacked) => {
+                  const v = s.values[i] ?? 0;
+                  if (v <= 0) return null;
+                  const isTop = stacked.slice(0, si).every(prev => (prev.values[i] ?? 0) <= 0);
+                  return (
+                    <View
+                      key={s.name}
+                      style={{
+                        height: Math.max(3, (v / top) * plot),
+                        backgroundColor: s.color,
+                        borderTopLeftRadius: isTop ? 4 : 0,
+                        borderTopRightRadius: isTop ? 4 : 0,
+                        marginTop: isTop ? 0 : 2,
+                      }}
+                    />
+                  );
+                })}
+              </View>
+            </Pressable>
+          ))}
+        </View>
+        <View style={[styles.barLabels, { marginLeft: axisWidth }]}>
+          {labels.map((label, i) => (
+            <Text key={`${label}-l-${i}`} numberOfLines={1} style={styles.barLabel}>{label}</Text>
+          ))}
+        </View>
+        {hover !== null && width > 0 ? (
+          <Tooltip
+            title={labels[hover]}
+            left={axisWidth + ((hover + 0.5) / labels.length) * (width - axisWidth)}
+            width={width}
+            rows={[
+              ...series.map(s => ({ color: s.color, label: s.name, value: show(s.values[hover]) })),
+              { label: 'Total', value: show(totals[hover]) },
+            ]}
+          />
+        ) : null}
+      </View>
+      <Legend items={series.map(s => ({ color: s.color, label: s.name }))} />
+    </View>
+  );
+}
+
+/**
+ * Donut for a part-to-whole split of a few categories (≤ 5). The centre shows
+ * the total (or the hovered part); the legend carries labels and values so
+ * identity is never colour alone.
+ */
+export function DonutChart({
+  segments,
+  size = 150,
+  centerLabel = 'total',
+  formatValue,
+}: {
+  segments: Array<{ label: string; value: number; color: string }>;
+  size?: number;
+  centerLabel?: string;
+  formatValue?: (value: number) => string;
+}) {
+  const colors = useColors();
+  const styles = useChartStyles();
+  const [hover, setHover] = useState<number | null>(null);
+  const show = (v: number) => (formatValue ? formatValue(v) : fmt(v));
+  const total = segments.reduce((sum, s) => sum + Math.max(0, s.value), 0);
+  const stroke = 18;
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
+  // 2px surface gap between segments, measured along the ring.
+  const gap = segments.filter(s => s.value > 0).length > 1 ? 2 : 0;
+  let offset = 0;
+  const arcs = segments.map(s => {
+    const length = total > 0 ? (Math.max(0, s.value) / total) * circumference : 0;
+    const arc = { ...s, length: Math.max(0, length - gap), offset };
+    offset += length;
+    return arc;
+  });
+  const focus = hover !== null ? segments[hover] : null;
+  return (
+    <View style={styles.donutWrap}>
+      <View style={{ width: size, height: size }}>
+        <Svg width={size} height={size}>
+          <Circle cx={size / 2} cy={size / 2} r={radius} stroke={colors.gridLine} strokeWidth={stroke} fill="none" />
+          {arcs.map((arc, i) =>
+            arc.length > 0 ? (
+              <Circle
+                key={arc.label}
+                cx={size / 2}
+                cy={size / 2}
+                r={radius}
+                stroke={arc.color}
+                strokeOpacity={hover === null || hover === i ? 1 : 0.35}
+                strokeWidth={hover === i ? stroke + 4 : stroke}
+                fill="none"
+                strokeDasharray={`${arc.length} ${circumference}`}
+                strokeDashoffset={-arc.offset}
+                transform={`rotate(-90 ${size / 2} ${size / 2})`}
+              />
+            ) : null,
+          )}
+        </Svg>
+        <View style={styles.ringCenter} pointerEvents="none">
+          <Text style={styles.ringValue}>{show(focus ? focus.value : total)}</Text>
+          <Text numberOfLines={1} style={styles.ringLabel}>{focus ? focus.label : centerLabel}</Text>
+        </View>
+      </View>
+      <View style={styles.donutLegend}>
+        {segments.map((s, i) => (
+          <Pressable
+            key={s.label}
+            accessibilityLabel={`${s.label}: ${show(s.value)}`}
+            onHoverIn={() => setHover(i)}
+            onHoverOut={() => setHover(current => (current === i ? null : current))}
+            onPressIn={() => setHover(i)}
+            style={[styles.donutRow, hover === i && { backgroundColor: colors.gridLine }]}
+          >
+            <View style={[styles.donutSwatch, { backgroundColor: s.color }]} />
+            <Text numberOfLines={1} style={styles.donutLabel}>{s.label}</Text>
+            <Text style={styles.donutValue}>{show(s.value)}</Text>
+            <Text style={styles.donutShare}>{total > 0 ? `${Math.round((s.value / total) * 100)}%` : '—'}</Text>
+          </Pressable>
+        ))}
+      </View>
+    </View>
+  );
+}
+
 export function Legend({ items }: { items: Array<{ color: string; label: string }> }) {
   const styles = useChartStyles();
   return (
@@ -409,7 +583,18 @@ export function Legend({ items }: { items: Array<{ color: string; label: string 
 }
 
 /** Change against the previous period: ▲ 12% / ▼ 4% / no change. */
-export function Delta({ current, previous, suffix = 'vs last month' }: { current: number; previous: number; suffix?: string }) {
+export function Delta({
+  current,
+  previous,
+  suffix = 'vs last month',
+  invert = false,
+}: {
+  current: number;
+  previous: number;
+  suffix?: string;
+  /** Rising is bad (e.g. cancellations): ▲ shows in the critical tone. */
+  invert?: boolean;
+}) {
   const colors = useColors();
   const styles = useChartStyles();
   const change = useMemo(() => {
@@ -418,7 +603,7 @@ export function Delta({ current, previous, suffix = 'vs last month' }: { current
   }, [current, previous]);
   const up = (change ?? 1) > 0;
   const flat = change === 0;
-  const tone = flat ? colors.textMuted : up ? colors.success : colors.criticalSeverity;
+  const tone = flat ? colors.textMuted : up !== invert ? colors.success : colors.criticalSeverity;
   return (
     <View style={styles.delta}>
       <View style={[styles.deltaPill, { backgroundColor: tone + '1A' }]}>
@@ -476,6 +661,15 @@ const useChartStyles = makeStyles(c =>
     heatCell: { flex: 1, height: 22, borderRadius: 4, borderWidth: 1, borderColor: 'transparent' },
     heatColLabel: { flex: 1, fontSize: 9.5, textAlign: 'center', color: c.textMuted },
     heatCaption: { fontSize: 11.5, color: c.textMuted, marginTop: 6 },
+    gridRule: { position: 'absolute', right: 0, height: 1 },
+    stack: { width: '78%', maxWidth: 46 },
+    donutWrap: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 18 },
+    donutLegend: { flexGrow: 1, flexBasis: 180, gap: 2 },
+    donutRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6, paddingHorizontal: 6, borderRadius: 8 },
+    donutSwatch: { width: 10, height: 10, borderRadius: 3 },
+    donutLabel: { flex: 1, fontSize: 12.5, fontWeight: '600', color: c.text },
+    donutValue: { fontSize: 12.5, fontWeight: '800', color: c.textDarker },
+    donutShare: { width: 38, textAlign: 'right', fontSize: 11.5, color: c.textMuted },
     legend: { flexDirection: 'row', flexWrap: 'wrap', gap: 16, marginTop: 10 },
     legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
     legendSwatch: { width: 12, height: 4, borderRadius: 2 },

@@ -76,6 +76,33 @@ export const fromNow = (value: unknown) => {
   return 'just now';
 };
 
+/**
+ * Counts for display: exact below 10,000, then floored with a plus so a
+ * figure never overstates (10,000–999,999 → "10K+"…"999K+", 1.25M → "1.2M+").
+ */
+export const formatCount = (value: number | null | undefined) => {
+  if (value == null || !Number.isFinite(Number(value))) return '—';
+  const n = Number(value);
+  const abs = Math.abs(n);
+  const sign = n < 0 ? '-' : '';
+  if (abs < 10_000) return n.toLocaleString();
+  if (abs < 1_000_000) return `${sign}${Math.floor(abs / 1000)}K+`;
+  if (abs < 1_000_000_000) return `${sign}${Math.floor(abs / 100_000) / 10}M+`;
+  return `${sign}${Math.floor(abs / 100_000_000) / 10}B+`;
+};
+
+const CURRENCY_SIGNS: Record<string, string> = { NGN: '₦', USD: '$', GBP: '£', EUR: '€', GHS: '₵', KES: 'KSh ', ZAR: 'R' };
+export const currencySign = (currency?: string) => CURRENCY_SIGNS[String(currency || 'NGN').toUpperCase()] ?? `${currency} `;
+
+/** "₦12,500.50", or compact ("₦12K+") once the amount reaches 10,000. */
+export const formatMoney = (value: number | null | undefined, currency = 'NGN', compact = false) => {
+  if (value == null || !Number.isFinite(Number(value))) return '—';
+  const n = Number(value);
+  const sign = currencySign(currency);
+  if (compact && Math.abs(n) >= 10_000) return `${n < 0 ? '-' : ''}${sign}${formatCount(Math.abs(n))}`;
+  return `${n < 0 ? '-' : ''}${sign}${Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+};
+
 // ---------------------------------------------------------------------------
 // Buttons and inputs
 // ---------------------------------------------------------------------------

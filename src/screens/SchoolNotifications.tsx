@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { getSchoolNotifications, SchoolAudience, sendSchoolNotification } from '../api';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Attachment, getSchoolNotifications, SchoolAudience, sendSchoolNotification } from '../api';
+import { AttachmentPicker } from '../dashboard';
 import { errorMessage, isSchoolAdminA, useSession, useToast } from '../context';
 import { Icon, IconName } from '../icons';
 import { NotificationItem } from '../NotificationItem';
@@ -57,6 +58,7 @@ export function SchoolNotifications() {
   const [page, setPage] = useState(1);
   const [title, setTitle] = useState('');
   const [message, setMessage] = useState('');
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [audiences, setAudiences] = useState<SchoolAudience[]>(['students']);
   const [department, setDepartment] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -77,7 +79,8 @@ export function SchoolNotifications() {
   const toggle = (audience: SchoolAudience) =>
     setAudiences(current => (current.includes(audience) ? current.filter(a => a !== audience) : [...current, audience]));
 
-  const valid = title.trim().length >= 3 && message.trim().length >= 3 && audiences.length > 0;
+  // A memo image can carry the whole message.
+  const valid = title.trim().length >= 3 && (message.trim().length >= 3 || attachments.length > 0) && audiences.length > 0;
   const scopeLabel = institutionRep ? department || 'the whole institution' : `the ${data?.department ?? 'your'} department`;
   const audienceLabel = audiences.map(a => AUDIENCE_META[a].label.toLowerCase()).join(', ');
 
@@ -89,11 +92,13 @@ export function SchoolNotifications() {
         message: message.trim(),
         audiences,
         department: institutionRep ? department : undefined,
+        attachments,
       });
       toast('success', result.message, 'Sending');
       setConfirming(false);
       setTitle('');
       setMessage('');
+      setAttachments([]);
       setPage(1);
       setView('sent');
       await load();
@@ -140,8 +145,9 @@ export function SchoolNotifications() {
                 multiline
                 value={message}
                 onChangeText={value => setMessage(value.slice(0, MESSAGE_MAX))}
-                placeholder="What do they need to know?"
+                placeholder={attachments.length ? 'Optional when you attach the memo' : 'What do they need to know?'}
               />
+              <AttachmentPicker value={attachments} onChange={setAttachments} />
               <Button title="Review and send" icon="send" disabled={!valid} onPress={() => setConfirming(true)} />
             </Card>
           </View>
@@ -151,14 +157,15 @@ export function SchoolNotifications() {
               <NotificationItem
                 item={{
                   title: title.trim() || 'Your title',
-                  message: message.trim() || 'Your message will appear here.',
+                  message: message.trim() || (attachments.length ? 'Open to view the attached memo.' : 'Your message will appear here.'),
                   category: 'classroom',
                   actionType: 'SCHOOL_ANNOUNCEMENT',
                   isRead: false,
                   createdAt: new Date().toISOString(),
                 }}
               />
-              <Text style={styles.meta}>Recipients can open it to read the full message. Students who turned off classroom notifications won't get a push.</Text>
+              {attachments[0] ? <Image source={{ uri: attachments[0].url }} style={styles.previewImage} resizeMode="cover" /> : null}
+              <Text style={styles.meta}>Recipients can open it to read the full message and view attached images. Students who turned off classroom notifications won't get a push.</Text>
             </Card>
           </View>
         </View>
@@ -185,6 +192,13 @@ export function SchoolNotifications() {
                     <Pill label={item.status === 'sent' ? 'SENT' : 'SENDING'} color={item.status === 'sent' ? colors.success : colors.pendingDelivery} />
                   </View>
                   <Text numberOfLines={3} style={styles.body}>{item.message}</Text>
+                  {item.attachments?.length ? (
+                    <View style={styles.sentImages}>
+                      {item.attachments.map((a: Attachment) => (
+                        <Image key={a.url} source={{ uri: a.url }} style={styles.sentImage} />
+                      ))}
+                    </View>
+                  ) : null}
                   <Text style={styles.meta}>
                     {item.senderName} · {item.department || 'All departments'} · {(item.audiences ?? []).map((a: SchoolAudience) => AUDIENCE_META[a]?.label ?? a).join(', ')} · {fromNow(item.createdAt)}
                   </Text>
@@ -246,6 +260,9 @@ const useStyles = makeStyles(c =>
     sentHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     sentTitle: { flexShrink: 1, fontSize: 14, fontWeight: '800', color: c.textDarker },
     reach: { alignItems: 'flex-end' },
+    previewImage: { width: '100%', height: 180, borderRadius: 12, marginBottom: 10 },
+    sentImages: { flexDirection: 'row', gap: 6, marginBottom: 4 },
+    sentImage: { width: 56, height: 56, borderRadius: 8, backgroundColor: c.surfaceRaised },
     pager: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 16, marginTop: 16 },
   }),
 );

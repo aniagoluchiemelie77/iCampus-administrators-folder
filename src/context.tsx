@@ -10,10 +10,11 @@ export type Role =
   | 'support'
   | 'moderator'
   | 'analyst'
+  | 'social_media'
   | 'school_admin_a'
   | 'school_admin_b';
 
-const ALL_ROLES: Role[] = ['super_admin', 'finance', 'support', 'moderator', 'analyst', 'school_admin_a', 'school_admin_b'];
+const ALL_ROLES: Role[] = ['super_admin', 'finance', 'support', 'moderator', 'analyst', 'social_media', 'school_admin_a', 'school_admin_b'];
 const SCHOOL_ROLES: Role[] = ['school_admin_a', 'school_admin_b'];
 
 /** "school_administrator" is the old name for the A-level institution representative. */
@@ -25,6 +26,9 @@ export const isSchoolAdmin = (adminType: string | undefined) => isSchoolAdminA(a
 
 export type Tab =
   | 'Overview'
+  | 'Finance'
+  | 'Social Media'
+  | 'Users'
   | 'Tickets'
   | 'Security Alerts'
   | 'Financial'
@@ -37,6 +41,7 @@ export type Tab =
   | 'Institutions'
   | 'Drop-off Stations'
   | 'Advertisements'
+  | 'School Billing'
   | 'Tax Entries';
 
 // The first nine are the iCampus dashboard tabs (CATEGORY_ACCESS). The last four
@@ -44,6 +49,11 @@ export type Tab =
 // the matching Overview preview.
 export const TAB_ACCESS: Record<Tab, Role[]> = {
   Overview: ALL_ROLES,
+  // Finance admins already get this dashboard as their Overview.
+  Finance: ['super_admin'],
+  // Social media admins get this dashboard as their Overview.
+  'Social Media': ['super_admin'],
+  Users: SCHOOL_ROLES,
   Tickets: ['super_admin', 'support'],
   'Security Alerts': ['super_admin'],
   Financial: ['super_admin', 'finance'],
@@ -52,10 +62,13 @@ export const TAB_ACCESS: Record<Tab, Role[]> = {
   Subscriptions: ['super_admin'],
   Store: ['super_admin', 'finance'],
   'Access Control': ALL_ROLES,
-  Notifications: SCHOOL_ROLES,
+  // School reps notify their school; support and super admins notify users;
+  // everyone reads their own inbox here.
+  Notifications: ALL_ROLES,
   Institutions: ['super_admin', 'support'],
   'Drop-off Stations': ['super_admin', 'support'],
   Advertisements: ['super_admin', 'school_admin_a'],
+  'School Billing': ['super_admin', 'finance'],
   'Tax Entries': ['super_admin', 'finance'],
 };
 
@@ -73,6 +86,8 @@ export const canAccess = (tab: Tab, adminType: string) =>
 
 export type SchoolSectionId = 'courses' | 'announcements' | 'lectures' | 'at-risk' | 'lecturers';
 
+export type FinanceSectionId = 'transactions' | 'orders' | 'sellers' | 'products' | 'subscribers' | 'payments' | 'schools';
+
 export type Route =
   | { name: 'ticket'; ticket: SupportTicket }
   | { name: 'chat'; ticketRefId: string }
@@ -82,9 +97,13 @@ export type Route =
   | { name: 'institutionForm'; item?: Record<string, any> }
   | { name: 'stationForm'; item?: Record<string, any> }
   | { name: 'adForm'; item?: Record<string, any> }
-  | { name: 'schoolSection'; section: SchoolSectionId; department?: string | null; filter?: string }
+  | { name: 'schoolSection'; section: SchoolSectionId; department?: string | null; filter?: string; session?: string }
   | { name: 'repForm'; rep?: SchoolRep; canInviteA?: boolean }
-  | { name: 'auditLog' };
+  | { name: 'auditLog' }
+  | { name: 'financeSection'; section: FinanceSectionId; status?: string; year?: number; period?: number | 'all' }
+  | { name: 'adminDetail'; uid: string }
+  | { name: 'adminActivity'; actorUid?: string; title?: string }
+  | { name: 'messageAdmins'; uids?: string[]; label?: string };
 
 type Session = { admin: AdminUser; logout: () => void };
 type Navigation = {

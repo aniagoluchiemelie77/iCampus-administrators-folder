@@ -13,6 +13,7 @@ import {
   Card,
   CurrencyDisplay,
   EmptyState,
+  formatCount,
   formatDate,
   formatLabel,
   Loading,
@@ -23,6 +24,9 @@ import {
   UserAvatar,
   UserIdentity,
 } from '../ui';
+import { FinanceOverview } from './Finance';
+import { PlatformOverview, SupportOverview } from './Platform';
+import { SocialOverview } from './Social';
 import { SchoolAnalyticsView, SchoolOverview } from './SchoolAnalytics';
 
 type Stats = Record<string, any>;
@@ -66,7 +70,7 @@ function DashboardSummary({ stats }: { stats: Stats }) {
   return (
     <View style={styles.summary}>
       <StatCard icon="groups" label="Active Users" tone={colors.info} hint="People using iCampus right now">
-        <Text style={styles.statValue}>{Number(stats.activeUsers ?? 0).toLocaleString()}</Text>
+        <Text style={styles.statValue}>{formatCount(Number(stats.activeUsers ?? 0))}</Text>
       </StatCard>
       <StatCard
         icon="confirmation-number"
@@ -75,7 +79,7 @@ function DashboardSummary({ stats }: { stats: Stats }) {
         hint={tickets === 0 ? 'All caught up' : 'Waiting for a response'}
         trend={stats.ticketTrend}
       >
-        <Text style={styles.statValue}>{tickets.toLocaleString()}</Text>
+        <Text style={styles.statValue}>{formatCount(tickets)}</Text>
       </StatCard>
     </View>
   );
@@ -241,7 +245,7 @@ function TaxEntryPreviewSection({ items, onViewAll }: { items: Record<string, an
   );
 }
 
-function AdsPreviewSection({ onViewAll }: { onViewAll: () => void }) {
+export function AdsPreviewSection({ onViewAll }: { onViewAll: () => void }) {
   const toast = useToast();
   const styles = useStyles();
   const { width, onLayout } = useMeasuredWidth();
@@ -294,7 +298,7 @@ function EntityPreviewSection({
   const styles = useStyles();
   return (
     <Card style={styles.flexCard}>
-      <SectionHeader icon={icon} title={title} subtitle={`${total.toLocaleString()} in total`} onViewAll={onViewAll} />
+      <SectionHeader icon={icon} title={title} subtitle={`${formatCount(total)} in total`} onViewAll={onViewAll} />
       {items.length === 0 ? <Text style={styles.muted}>Nothing added yet.</Text> : null}
       {items.map((item, index) => (
         <Pressable
@@ -406,7 +410,19 @@ function DetailSheet({
 /** The dashboard. `header` is the page intro, scrolled along with the content. */
 export function Overview({ header }: { header?: React.ReactNode }) {
   const { admin } = useSession();
-  return isSchoolAdmin(admin.adminType) ? <SchoolOverview header={header} /> : <StaffOverview header={header} />;
+  if (isSchoolAdmin(admin.adminType)) return <SchoolOverview header={header} />;
+  switch (admin.adminType) {
+    case 'finance':
+      return <FinanceOverview header={header} />;
+    case 'super_admin':
+      return <PlatformOverview header={header} />;
+    case 'support':
+      return <SupportOverview header={header} />;
+    case 'social_media':
+      return <SocialOverview header={header} />;
+    default:
+      return <StaffOverview header={header} />;
+  }
 }
 
 /** iCampus staff dashboard: platform health, finance and institutions. */

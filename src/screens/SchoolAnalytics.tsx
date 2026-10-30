@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Animated, Easing, Image, StyleSheet, Text, View } from 'react-native';
-import { getAdminMetrics } from '../api';
-import { AreaChart, BarChart, Delta, Heatmap, Legend, MeterRow, RingGauge, Sparkline } from '../charts';
-import { errorMessage, isSchoolAdminA, SchoolSectionId, useNavigation, useSession, useToast } from '../context';
+import { exportSchoolData, getAdminMetrics } from '../api';
+import { AreaChart, BarChart, Delta, DonutChart, Heatmap, Legend, MeterRow, RingGauge, Sparkline, StackedBarChart } from '../charts';
+import { ExportButton, ExportOption } from '../dashboard';
+import { errorMessage, isSchoolAdmin, isSchoolAdminA, SchoolSectionId, useNavigation, useSession, useToast } from '../context';
 import { Icon, IconName } from '../icons';
 import { makeStyles, useColors } from '../theme';
 import {
@@ -10,6 +11,7 @@ import {
   Card,
   EmptyState,
   FilterChips,
+  formatCount,
   formatDate,
   fromNow,
   Loading,
@@ -29,7 +31,7 @@ import {
 type Metrics = Record<string, any>;
 
 const fmtPct = (v: number | null | undefined) => (v == null ? '—' : `${v}%`);
-const fmtNum = (v: number | null | undefined) => (v == null ? '—' : Number(v).toLocaleString());
+const fmtNum = formatCount;
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 /** "2026-03" → "Mar". */
@@ -240,6 +242,79 @@ function LiveSection({ live, onViewAll }: { live: Metrics; onViewAll: () => void
 }
 
 // ---------------------------------------------------------------------------
+// Online vs physical classes
+// ---------------------------------------------------------------------------
+
+/** What a school rep can export, by plan. */
+export const schoolExportOptions = (access?: { professional?: boolean; enterprise?: boolean }): ExportOption[] => [
+  { value: 'overview', label: 'Institution summary', hint: 'Headline figures and lectures by month' },
+  { value: 'courses', label: 'Courses this session' },
+  { value: 'lectures', label: 'Lectures this session', hint: 'Every lecture with type, host and check-ins' },
+  { value: 'announcements', label: 'Announcements this session' },
+  { value: 'students', label: 'Students', personal: true, hint: 'Name, matric number, department, level' },
+  { value: 'lecturer-accounts', label: 'Lecturers', personal: true, hint: 'Name, staff ID, department' },
+  ...(access?.professional ? [{ value: 'lecturers', label: 'Lecturer activity', personal: true }] : []),
+  ...(access?.enterprise ? [{ value: 'at-risk', label: 'Students at risk', personal: true }] : []),
+];
+
+function LectureModesCard({ modes, department, onViewAll }: { modes: Metrics; department: string | null; onViewAll: () => void }) {
+  const colors = useColors();
+  const styles = useStyles();
+  const held = modes.physical + modes.online;
+  const byMonth = modes.byMonth as Array<{ month: string; physical: number; online: number }>;
+  const depts = (modes.byDepartment as Array<{ department: string; physical: number; online: number }>).slice(0, 6);
+  return (
+    <Card>
+      <SectionHeader icon="cast-for-education" title="Online vs physical classes" subtitle="How lectures are delivered this session" onViewAll={onViewAll} />
+      <View style={styles.grid}>
+        <View style={styles.gridHalf}>
+          <Text style={styles.subTitle}>Lectures held so far</Text>
+          {held > 0 ? (
+            <DonutChart
+              centerLabel="lectures held"
+              formatValue={v => fmtNum(v)}
+              segments={[
+                { label: 'Physical', value: modes.physical, color: colors.series1 },
+                { label: 'Online', value: modes.online, color: colors.series2 },
+              ]}
+            />
+          ) : (
+            <Text style={styles.muted}>No lectures held yet this session.</Text>
+          )}
+          <Text style={styles.subTitle}>Attendance by class type</Text>
+          <MeterRow label="Physical" value={modes.attendanceRatePct.physical} color={colors.series1} />
+          <MeterRow label="Online" value={modes.attendanceRatePct.online} color={colors.series2} />
+        </View>
+        <View style={styles.gridHalf}>
+          <Text style={styles.subTitle}>Scheduled per month</Text>
+          <StackedBarChart
+            labels={byMonth.map(m => monthLabel(m.month))}
+            series={[
+              { name: 'Physical', color: colors.series1, values: byMonth.map(m => m.physical) },
+              { name: 'Online', color: colors.series2, values: byMonth.map(m => m.online) },
+            ]}
+          />
+          {!department && depts.length > 1 ? (
+            <>
+              <Text style={styles.subTitle}>Online share by department</Text>
+              {depts.map(d => (
+                <MeterRow
+                  key={d.department}
+                  label={d.department}
+                  value={d.physical + d.online > 0 ? Math.round((d.online / (d.physical + d.online)) * 100) : null}
+                  color={colors.series2}
+                  sub={`${fmtNum(d.physical)} physical · ${fmtNum(d.online)} online`}
+                />
+              ))}
+            </>
+          ) : null}
+        </View>
+      </View>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // The dashboard
 // ---------------------------------------------------------------------------
 
@@ -248,24 +323,34 @@ export function SchoolAnalyticsView({
   department,
   onDepartmentChange,
   canFilter,
+  onSessionChange,
 }: {
   metrics: Metrics;
   department: string | null;
   onDepartmentChange?: (department: string | null) => void;
   canFilter: boolean;
+  /** Omitted where the session can't be changed (e.g. a super admin's preview). */
+  onSessionChange?: (session: string) => void;
 }) {
   const colors = useColors();
   const styles = useStyles();
   const { push, setTab } = useNavigation();
+  const { admin } = useSession();
   const { basic, professional: pro, enterprise: ent, institution: inst, kpis, live } = metrics;
   const lockedFor = (tier: string) => metrics.locked?.find((item: any) => item.tier === tier);
   const departments: string[] = metrics.scope?.departments ?? [];
   const scopeLabel = department || 'All departments';
-  const viewAll = (section: SchoolSectionId, filter?: string) => () => push({ name: 'schoolSection', section, department, filter });
+  const sessionLabel: string = metrics.session?.label ?? '';
+  const isCurrent = metrics.session?.isCurrent !== false;
+  const sessions: string[] = metrics.sessions ?? [];
+  const viewAll = (section: SchoolSectionId, filter?: string) => () =>
+    push({ name: 'schoolSection', section, department, filter, session: sessionLabel });
+  // "This month" only makes sense for the current session.
+  const thisMonth = isCurrent ? 'this month' : 'in its last month';
+  const lastMonth = isCurrent ? 'last month' : 'the month before';
 
   if (!basic || !kpis) return null;
   const attendance = basic.attendance;
-  const totalHeld = attendance.physicalLectures + attendance.onlineLectures;
 
   return (
     <View>
@@ -274,11 +359,41 @@ export function SchoolAnalyticsView({
         <View style={styles.flex}>
           <Text numberOfLines={2} style={styles.heroName}>{inst?.name || 'Your institution'}</Text>
           <Text style={styles.muted}>
-            {metrics.session?.label} session · {scopeLabel} · updated {metrics.generatedAt ? fromNow(metrics.generatedAt) : 'just now'}
+            {scopeLabel} · updated {metrics.generatedAt ? fromNow(metrics.generatedAt) : 'just now'}
           </Text>
         </View>
+        <Pill
+          label={`${sessionLabel} SESSION${isCurrent ? '' : ' · PAST'}`}
+          icon={isCurrent ? 'event' : 'history'}
+          color={isCurrent ? colors.success : colors.pendingDelivery}
+        />
         <PlanBadge label={inst?.tierLabel || 'Basic'} />
+        {isSchoolAdmin(admin.adminType) ? (
+        <ExportButton
+          title="Export institution data"
+          scopeNote={`${sessionLabel} session · ${scopeLabel}`}
+          options={schoolExportOptions(metrics.access)}
+          onExport={([section]) => exportSchoolData({ section, department, session: sessionLabel })}
+        />
+        ) : null}
       </View>
+
+      {onSessionChange && sessions.length > 1 ? (
+        <FilterChips
+          value={sessionLabel}
+          onChange={onSessionChange}
+          options={sessions.map((label, i) => ({ value: label, label: i === 0 ? `${label} (current)` : label }))}
+        />
+      ) : null}
+      {!isCurrent ? (
+        <View style={[styles.pastNote, { borderLeftColor: colors.pendingDelivery, backgroundColor: colors.pendingDelivery + '12' }]}>
+          <Icon name="history" size={16} color={colors.pendingDelivery} />
+          <Text style={[styles.muted, styles.flex]}>
+            You are viewing the {sessionLabel} session, which has ended. Figures are as of its last day; live lectures only show for the
+            current session.
+          </Text>
+        </View>
+      ) : null}
 
       {canFilter && departments.length > 0 ? (
         <FilterChips
@@ -299,31 +414,33 @@ export function SchoolAnalyticsView({
           label="Total Students Enrolled"
           tone={colors.series1}
           kpi={kpis.students}
-          hint={`+${fmtNum(kpis.students.addedThisMonth)} this month · +${fmtNum(kpis.students.addedLastMonth)} last month`}
+          hint={`+${fmtNum(kpis.students.addedThisMonth)} ${thisMonth} · +${fmtNum(kpis.students.addedLastMonth)} ${lastMonth}`}
         />
         <KpiCard
           icon="co-present"
           label="Total Lecturers Enrolled"
           tone={colors.series3}
           kpi={kpis.lecturers}
-          hint={`+${fmtNum(kpis.lecturers.addedThisMonth)} this month · +${fmtNum(kpis.lecturers.addedLastMonth)} last month`}
+          hint={`+${fmtNum(kpis.lecturers.addedThisMonth)} ${thisMonth} · +${fmtNum(kpis.lecturers.addedLastMonth)} ${lastMonth}`}
         />
-        <KpiCard icon="event-available" label="Total Classes Scheduled" tone={colors.primary} kpi={kpis.classes} hint="Lectures scheduled this month (cancelled excluded)" />
+        <KpiCard icon="event-available" label="Total Classes Scheduled" tone={colors.primary} kpi={kpis.classes} hint={`Lectures scheduled ${thisMonth} (cancelled excluded)`} />
       </View>
 
       <View style={styles.grid}>
         <View style={styles.gridWide}>
           <MonthlyTrend kpis={kpis} />
         </View>
-        <View style={styles.gridNarrow}>
-          <LiveSection live={live} onViewAll={viewAll('lectures', live.ongoingCount > 0 ? 'ongoing' : 'today')} />
-        </View>
+        {isCurrent ? (
+          <View style={styles.gridNarrow}>
+            <LiveSection live={live} onViewAll={viewAll('lectures', live.ongoingCount > 0 ? 'ongoing' : 'today')} />
+          </View>
+        ) : null}
       </View>
 
       <View style={styles.grid}>
         <View style={styles.gridHalf}>
           <Card>
-            <SectionHeader icon="how-to-reg" title="Attendance overview" subtitle="Current session, lectures held so far" onViewAll={viewAll('lectures')} />
+            <SectionHeader icon="how-to-reg" title="Attendance overview" subtitle={`${sessionLabel} session${isCurrent ? ', lectures held so far' : ''}`} onViewAll={viewAll('lectures')} />
             <View style={styles.ringRow}>
               <RingGauge value={attendance.attendanceRatePct} color={colors.primary} label="attendance" />
               <View style={styles.flex}>
@@ -337,21 +454,6 @@ export function SchoolAnalyticsView({
                 />
               </View>
             </View>
-            {totalHeld > 0 ? (
-              <>
-                <Text style={styles.subTitle}>Physical vs online</Text>
-                <View style={styles.splitBar}>
-                  <View style={{ flex: attendance.physicalLectures, backgroundColor: colors.series1 }} />
-                  <View style={{ flex: attendance.onlineLectures, backgroundColor: colors.series2 }} />
-                </View>
-                <Legend
-                  items={[
-                    { color: colors.series1, label: `Physical ${fmtNum(attendance.physicalLectures)}` },
-                    { color: colors.series2, label: `Online ${fmtNum(attendance.onlineLectures)}` },
-                  ]}
-                />
-              </>
-            ) : null}
           </Card>
         </View>
         <View style={styles.gridHalf}>
@@ -372,6 +474,8 @@ export function SchoolAnalyticsView({
           </Card>
         </View>
       </View>
+
+      {basic.lectureModes ? <LectureModesCard modes={basic.lectureModes} department={department} onViewAll={viewAll('lectures')} /> : null}
 
       <Card>
         <SectionHeader icon="menu-book" title="Courses this session" subtitle={`${metrics.session?.label} · sorted by enrolment`} onViewAll={viewAll('courses')} />
@@ -705,16 +809,18 @@ export function SchoolOverview({ header }: { header?: React.ReactNode }) {
   const styles = useStyles();
   const canFilter = isSchoolAdminA(admin.adminType);
   const [department, setDepartment] = useState<string | null>(null);
+  // null = the current session (the server decides which that is).
+  const [session, setSession] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
 
   const load = useCallback(
-    async (next: string | null) => {
+    async (next: string | null, nextSession: string | null) => {
       setLoading(true);
       setFailed(false);
       try {
-        const result = await getAdminMetrics(canFilter ? next : null);
+        const result = await getAdminMetrics(canFilter ? next : null, nextSession);
         setMetrics(result.schoolMetrics ?? null);
       } catch (reason) {
         setFailed(true);
@@ -727,8 +833,8 @@ export function SchoolOverview({ header }: { header?: React.ReactNode }) {
   );
 
   useEffect(() => {
-    void load(department);
-  }, [department, load]);
+    void load(department, session);
+  }, [department, load, session]);
 
   return (
     <ScrollPage contentContainerStyle={styles.page}>
@@ -740,6 +846,7 @@ export function SchoolOverview({ header }: { header?: React.ReactNode }) {
             department={canFilter ? department : metrics.scope?.department ?? null}
             onDepartmentChange={setDepartment}
             canFilter={canFilter}
+            onSessionChange={setSession}
           />
         </View>
       ) : loading ? (
@@ -751,7 +858,7 @@ export function SchoolOverview({ header }: { header?: React.ReactNode }) {
           subtitle={failed ? 'Check your connection, then try again.' : 'No analytics were returned for your account.'}
           buttonText="Try again"
           buttonIcon="refresh"
-          onPress={() => void load(department)}
+          onPress={() => void load(department, session)}
         />
       )}
       {metrics && loading ? <Text style={styles.updating}>Updating…</Text> : null}
@@ -777,6 +884,7 @@ const useStyles = makeStyles(c =>
     gapTop: { marginTop: 10 },
     hero: {
       flexDirection: 'row',
+      flexWrap: 'wrap',
       alignItems: 'center',
       gap: 14,
       padding: 18,
@@ -789,6 +897,7 @@ const useStyles = makeStyles(c =>
     heroLogo: { width: 48, height: 48, borderRadius: 24, backgroundColor: c.surfaceRaised },
     heroName: { fontSize: 18, fontWeight: '900', color: c.textDarker, marginBottom: 3 },
     scopeNote: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 16 },
+    pastNote: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 12, borderRadius: 10, borderLeftWidth: 4, marginBottom: 14 },
     kpis: { flexDirection: 'row', flexWrap: 'wrap', gap: 16, marginBottom: 16 },
     kpi: {
       flexGrow: 1,
@@ -817,7 +926,6 @@ const useStyles = makeStyles(c =>
     tileLabel: { fontSize: 11.5, color: c.textMuted },
     subTitle: { fontSize: 13, fontWeight: '800', marginTop: 14, marginBottom: 10, color: c.textDarker },
     ringRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 18 },
-    splitBar: { flexDirection: 'row', height: 10, borderRadius: 5, overflow: 'hidden', gap: 2 },
     liveHead: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 },
     liveCount: { fontSize: 30, fontWeight: '900', color: c.textDarker, letterSpacing: -0.6 },
     lectureRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, borderTopWidth: 1, borderTopColor: c.borderSubtle },
