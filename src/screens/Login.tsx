@@ -99,10 +99,12 @@ export function Login({ onLogin }: { onLogin: (session: AdminSession) => void })
           <Field
             onChangeText={setPassword}
             placeholder="Enter your password..."
-            right={
+            // On the left, in line with the email icon above it.
+            left={
               <Pressable
                 accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
                 accessibilityRole="button"
+                hitSlop={8}
                 onPress={() => setShowPassword(value => !value)}
               >
                 <Icon name={showPassword ? 'visibility-off' : 'visibility'} size={20} color={colors.primaryTint} />

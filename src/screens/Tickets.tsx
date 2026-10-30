@@ -273,7 +273,7 @@ export function TicketDetail({ ticket: initialTicket }: { ticket: SupportTicket 
       {loading ? (
         <Loading />
       ) : (
-        <ScrollView contentContainerStyle={styles.detailContent} showsVerticalScrollIndicator={false}>
+        <ScrollView contentContainerStyle={styles.detailContent} showsVerticalScrollIndicator>
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Ticket Info</Text>
             <View style={styles.infoRow}>

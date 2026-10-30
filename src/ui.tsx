@@ -212,6 +212,7 @@ export function Field({
   multiline = false,
   locked = false,
   icon,
+  left,
   right,
   keyboardType,
   onSubmitEditing,
@@ -226,6 +227,8 @@ export function Field({
   multiline?: boolean;
   locked?: boolean;
   icon?: IconName;
+  /** Leading control (e.g. a show-password toggle), aligned like `icon`. */
+  left?: React.ReactNode;
   right?: React.ReactNode;
   keyboardType?: 'default' | 'email-address' | 'numeric' | 'url';
   style?: StyleProp<ViewStyle>;
@@ -237,6 +240,7 @@ export function Field({
       {label ? <Text style={styles.label}>{label}</Text> : null}
       <View style={[styles.inputRow, locked && styles.locked, multiline && styles.multilineRow]}>
         {icon ? <Icon name={icon} size={20} color={colors.primaryTint} style={styles.icon} /> : null}
+        {left ? <View style={[styles.icon, styles.leftSlot]}>{left}</View> : null}
         <TextInput
           accessibilityLabel={label ?? placeholder}
           autoCapitalize="none"
@@ -279,6 +283,7 @@ const useFieldStyles = makeStyles(c =>
     multilineRow: { alignItems: 'flex-start', paddingVertical: 10 },
     locked: { opacity: 0.7, backgroundColor: c.backgroundSecondary },
     icon: { marginRight: 8 },
+    leftSlot: { width: 20, alignItems: 'center', justifyContent: 'center' },
     input: { flex: 1, minWidth: 0, color: c.textDarker, fontSize: 14, paddingVertical: 12, ...noOutline },
     multilineInput: { minHeight: 90, textAlignVertical: 'top', paddingVertical: 0 },
   }),
@@ -355,25 +360,55 @@ export function ToggleRow({
   );
 }
 
+/**
+ * On web a mouse wheel only scrolls vertically, so a sideways strip that
+ * overflowed could only be moved with a trackpad or by dragging. This turns
+ * vertical wheel movement into sideways scrolling while the pointer is over
+ * the strip, and hands it back to the page once the strip reaches an end.
+ */
+const useWheelScrollsSideways = (ref: React.RefObject<any>) => {
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const node = ref.current?.getScrollableNode?.() as HTMLElement | undefined;
+    if (!node) return;
+    const onWheel = (event: WheelEvent) => {
+      if (Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
+      const max = node.scrollWidth - node.clientWidth;
+      const next = Math.max(0, Math.min(max, node.scrollLeft + event.deltaY));
+      if (max <= 0 || next === node.scrollLeft) return;
+      event.preventDefault();
+      node.scrollLeft = next;
+    };
+    node.addEventListener('wheel', onWheel, { passive: false });
+    return () => node.removeEventListener('wheel', onWheel);
+  }, [ref]);
+};
+
 /** Horizontal segmented tab strip; scrolls sideways when the tabs overflow. */
 export function TabStrip<T extends string>({
   tabs,
   active,
   onChange,
   uppercase = false,
+  scrollbar = false,
   style,
 }: {
   tabs: ReadonlyArray<{ id: T; label: string; badge?: number; icon?: IconName }>;
   active: T;
   onChange: (tab: T) => void;
   uppercase?: boolean;
+  /** Shows the sideways scrollbar (the narrow-screen navbar), so it's clear there's more. */
+  scrollbar?: boolean;
   style?: StyleProp<ViewStyle>;
 }) {
   const colors = useColors();
+  const ref = useRef<any>(null);
+  useWheelScrollsSideways(ref);
   return (
     <ScrollView
+      ref={ref}
       horizontal
-      showsHorizontalScrollIndicator={false}
+      showsHorizontalScrollIndicator={scrollbar}
       // flexShrink 0: on web a horizontal ScrollView shrinks by default, so a long
       // result list below it squeezed the strip down to a sliver.
       style={[uiStyles.tabStrip, { backgroundColor: colors.backgroundSecondary, borderColor: colors.borderSubtle }, style]}
@@ -647,8 +682,10 @@ export function FilterChips<T extends string>({
   style?: StyleProp<ViewStyle>;
 }) {
   const colors = useColors();
+  const ref = useRef<any>(null);
+  useWheelScrollsSideways(ref);
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[uiStyles.filterRow, style]} contentContainerStyle={uiStyles.filterRowContent}>
+    <ScrollView ref={ref} horizontal showsHorizontalScrollIndicator={false} style={[uiStyles.filterRow, style]} contentContainerStyle={uiStyles.filterRowContent}>
       {options.map(option => {
         const active = option.value === value;
         return (
@@ -918,7 +955,7 @@ export function Sheet({
             { backgroundColor: colors.backgroundSecondary, maxWidth, maxHeight: height * (dialog ? 0.85 : 0.88) },
           ]}
         >
-          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={uiStyles.sheetContent}>
+          <ScrollView showsVerticalScrollIndicator contentContainerStyle={uiStyles.sheetContent}>
             {children}
           </ScrollView>
         </View>

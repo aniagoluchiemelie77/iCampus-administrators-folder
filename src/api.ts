@@ -297,12 +297,6 @@ export const getSchoolNotifications = (page = 1) =>
 export const getSchoolAuditLog = (page = 1) =>
   request<Page<Record<string, any>>>(`admins/school/audit-log?page=${page}&limit=${LIST_PAGE_SIZE}`);
 
-export const getAdmins = async () => {
-  const result = await request<any>('admins/fetch-all');
-  const admins = Array.isArray(result) ? result : result.data;
-  return Array.isArray(admins) ? (admins as AdminUser[]) : [];
-};
-
 export const fetchTickets = async (limit = 20, cursor = '') => {
   const params = new URLSearchParams({ limit: String(limit), cursor });
   const result = await request<any>(`support/tickets/fetch-all?${params}`);
@@ -606,6 +600,8 @@ export const exportFinanceData = (options: {
   year?: number;
   period?: number | 'all';
   status?: string;
+  /** Adds an "Amount in <currency>" column to the money sheets. */
+  currency?: string;
 }) => request<ExportResult>('admins/finance/export', { method: 'POST', body: JSON.stringify(options) });
 
 // ---------------------------------------------------------------------------
@@ -642,6 +638,10 @@ export const getSchoolUsers = (options: {
 // ---------------------------------------------------------------------------
 
 export type FinancePeriod = number | 'all';
+
+/** Every finance figure is converted into one of these before it's shown. */
+export const DISPLAY_CURRENCIES = ['NGN', 'USD'] as const;
+export type DisplayCurrency = (typeof DISPLAY_CURRENCIES)[number];
 export type FinanceSectionId = 'transactions' | 'orders' | 'sellers' | 'products' | 'subscribers' | 'payments' | 'schools';
 
 const periodParams = (options: { year?: number; period?: FinancePeriod; currency?: string }) => {
@@ -657,7 +657,7 @@ export const getFinanceOverview = (options: { year?: number; period?: FinancePer
 
 export const getFinanceSection = (
   section: FinanceSectionId,
-  options: { year?: number; period?: FinancePeriod; status?: string; q?: string; page?: number } = {},
+  options: { year?: number; period?: FinancePeriod; status?: string; q?: string; page?: number; currency?: string } = {},
 ) => {
   const params = periodParams(options);
   params.set('page', String(options.page ?? 1));
@@ -696,8 +696,19 @@ export type DirectoryAdmin = AdminUser & {
   billingStatus?: string;
 };
 
-export const getAdminDirectory = () =>
-  request<{ admins: DirectoryAdmin[]; schoolAdmins: DirectoryAdmin[]; departmentReps: number }>('admins/platform/directory');
+export type AdminDirectory = {
+  /** Every iCampus staff admin. */
+  admins: DirectoryAdmin[];
+  /** One page of A-level institution reps. */
+  schoolAdmins: Page<DirectoryAdmin>;
+  totals: { schoolAdmins: number; departmentReps: number; activeThisWeek: number };
+};
+
+export const getAdminDirectory = (options: { page?: number; q?: string } = {}) => {
+  const params = new URLSearchParams({ page: String(options.page ?? 1), limit: String(LIST_PAGE_SIZE) });
+  if (options.q) params.set('q', options.q);
+  return request<AdminDirectory>(`admins/platform/directory?${params}`);
+};
 
 export const getAdminProfile = (uid: string) =>
   request<Record<string, any>>(`admins/platform/admins/${encodeURIComponent(uid)}`);

@@ -30,6 +30,7 @@ import {
   OptionPicker,
   PageHeader,
   Pill,
+  ScrollPage,
   SectionHeader,
   Sheet,
   ToggleRow,
@@ -302,7 +303,7 @@ export function InstitutionForm({ item }: { item?: Item }) {
   return (
     <View style={styles.flex}>
       <PageHeader title={item ? 'Manage Authorized Institution' : 'Create Authorized Institution'} />
-      <ScrollView contentContainerStyle={styles.form} showsVerticalScrollIndicator={false}>
+      <ScrollPage contentContainerStyle={styles.form}>
         <Text style={styles.groupTitle}>General Information</Text>
         <Field label="School Name" value={form.name} onChangeText={value => update('name', value)} />
         <Field label="Country Code" value={form.countryCode} onChangeText={value => update('countryCode', value.toUpperCase())} />
@@ -369,7 +370,7 @@ export function InstitutionForm({ item }: { item?: Item }) {
           disabled={!form.name.trim()}
           style={styles.submit}
         />
-      </ScrollView>
+      </ScrollPage>
     </View>
   );
 }
@@ -468,7 +469,7 @@ export function StationForm({ item }: { item?: Item }) {
   return (
     <View style={styles.flex}>
       <PageHeader title={item ? 'Manage Authorized Drop Off Station' : 'Create Authorized Drop Off Station'} />
-      <ScrollView contentContainerStyle={styles.form} showsVerticalScrollIndicator={false}>
+      <ScrollPage contentContainerStyle={styles.form}>
         <Field label="Station Name" value={form.name} onChangeText={value => update('name', value)} />
         <Field label="Address" value={form.address} onChangeText={value => update('address', value)} />
         <Field label="Contact Phone Number" value={form.contactPerson} onChangeText={value => update('contactPerson', value)} />
@@ -492,7 +493,7 @@ export function StationForm({ item }: { item?: Item }) {
           disabled={!form.name.trim()}
           style={styles.submit}
         />
-      </ScrollView>
+      </ScrollPage>
     </View>
   );
 }
@@ -525,7 +526,7 @@ export function AdsList() {
 
   return (
     <>
-      <ScrollView style={styles.flex} contentContainerStyle={styles.list} showsVerticalScrollIndicator={false}>
+      <ScrollPage contentContainerStyle={styles.list}>
         <SectionHeader
           icon="campaign"
           title="Advertisement Banners"
@@ -599,7 +600,7 @@ export function AdsList() {
               : null}
           </View>
         )}
-      </ScrollView>
+      </ScrollPage>
       <ConfirmModal
         visible={Boolean(deletion.target)}
         onClose={() => deletion.setTarget(null)}
@@ -641,7 +642,7 @@ export function AdForm({ item }: { item?: Item }) {
         title={item ? 'Edit Advertisement Banner' : 'Create Advertisement Banner'}
         subtitle={item ? `Managing ${form.advertiserName}` : 'Add a new sponsor slot'}
       />
-      <ScrollView contentContainerStyle={styles.form} showsVerticalScrollIndicator={false}>
+      <ScrollPage contentContainerStyle={styles.form}>
         <OptionPicker
           label="Ad Type"
           value={form.type}
@@ -657,7 +658,7 @@ export function AdForm({ item }: { item?: Item }) {
         <Field label="Advertiser Logo URL" keyboardType="url" value={form.advertiserLogo} onChangeText={value => update('advertiserLogo', value)} />
         <Field label="Tagline (Optional short text)" value={form.tagline} onChangeText={value => update('tagline', value)} />
         <Button title={saving ? 'Saving...' : 'Save Changes'} onPress={save} loading={saving} style={styles.submit} />
-      </ScrollView>
+      </ScrollPage>
     </View>
   );
 }

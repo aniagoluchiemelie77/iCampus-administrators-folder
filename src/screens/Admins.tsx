@@ -1,13 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { AdminUser, createAdmin, deleteAdmin, getAdmins, updateAdmin } from '../api';
-import { useMeasuredWidth } from '../charts';
+import React, { useRef, useState } from 'react';
+import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import { AdminUser, createAdmin, updateAdmin } from '../api';
 import { errorMessage, normalizeRole, useNavigation, useSession, useToast } from '../context';
 import { Icon, IconName } from '../icons';
 import { Colors, makeStyles, useColors } from '../theme';
 import {
   Button,
-  ConfirmModal,
   EmptyState,
   Field,
   formatDate,
@@ -15,13 +13,11 @@ import {
   fromNow,
   IconButton,
   isValidEmail,
-  Loading,
   OptionPicker,
   PageHeader,
   parseDate,
   Pill,
   ScrollPage,
-  SectionHeader,
   UserAvatar,
 } from '../ui';
 
@@ -131,133 +127,6 @@ export function AdminCard({
   );
 }
 
-const CARD_MIN_WIDTH = 320;
-const GAP = 16;
-
-export function AdminManagement() {
-  const { admin: currentAdmin } = useSession();
-  const { push } = useNavigation();
-  const toast = useToast();
-  const colors = useColors();
-  const styles = useStyles();
-  const { width, onLayout } = useMeasuredWidth();
-  const [admins, setAdmins] = useState<AdminUser[] | null>(null);
-  const [roleFilter, setRoleFilter] = useState<string>('all');
-  const [selected, setSelected] = useState<AdminUser | null>(null);
-  const [deleting, setDeleting] = useState(false);
-  const isSuperAdmin = currentAdmin.adminType === 'super_admin';
-
-  const load = useCallback(async () => {
-    try {
-      setAdmins(await getAdmins());
-    } catch (reason) {
-      setAdmins(previous => previous ?? []);
-      toast('error', errorMessage(reason, 'Failed to fetch administrator list'), 'Fetch Error');
-    }
-  }, [toast]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  const confirmDelete = async () => {
-    if (!selected) return;
-    setDeleting(true);
-    try {
-      await deleteAdmin(selected.uid);
-      toast('success', 'Administrator deleted.', 'Deleted');
-      setSelected(null);
-      await load();
-    } catch (reason) {
-      toast('error', errorMessage(reason, 'Failed to delete administrator.'), 'Delete Failed');
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  const roleCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const item of admins ?? []) counts.set(normalizeRole(item.adminType), (counts.get(normalizeRole(item.adminType)) ?? 0) + 1);
-    return [...counts.entries()];
-  }, [admins]);
-
-  if (!admins) return <Loading />;
-  const shown = roleFilter === 'all' ? admins : admins.filter(item => normalizeRole(item.adminType) === roleFilter);
-  const columns = Math.max(1, Math.floor((width + GAP) / (CARD_MIN_WIDTH + GAP)));
-  const cardWidth = width > 0 ? (width - GAP * (columns - 1)) / columns : undefined;
-
-  return (
-    <>
-      <ScrollPage contentContainerStyle={styles.list}>
-        <SectionHeader
-          icon="admin-panel-settings"
-          title="iCampus Administrators"
-          subtitle={`${admins.length} ${admins.length === 1 ? 'administrator' : 'administrators'} with portal access`}
-          right={
-            <View style={styles.headerActions}>
-              <IconButton filled size={19} icon="refresh" label="Refresh" onPress={() => void load()} />
-              {isSuperAdmin ? <Button compact icon="person-add-alt" title="Add Admin" onPress={() => push({ name: 'adminForm' })} /> : null}
-            </View>
-          }
-        />
-        {roleCounts.length > 1 ? (
-          <View style={styles.filters}>
-            {[['all', admins.length] as [string, number], ...roleCounts].map(([role, count]) => {
-              const active = roleFilter === role;
-              const tone = role === 'all' ? colors.primary : roleMeta(role, colors).tone;
-              return (
-                <Pressable
-                  key={role}
-                  accessibilityRole="radio"
-                  accessibilityState={{ selected: active }}
-                  onPress={() => setRoleFilter(role)}
-                  style={({ hovered }: any) => [
-                    styles.filter,
-                    { borderColor: active ? tone : colors.borderSubtle, backgroundColor: active ? tone + '17' : hovered ? colors.primary + '0A' : colors.backgroundSecondary },
-                  ]}
-                >
-                  <Text style={[styles.filterText, { color: active ? tone : colors.text }]}>
-                    {role === 'all' ? 'All roles' : formatLabel(role)}
-                  </Text>
-                  <Text style={[styles.filterCount, { color: active ? tone : colors.textMuted }]}>{count}</Text>
-                </Pressable>
-              );
-            })}
-          </View>
-        ) : null}
-        <View onLayout={onLayout} style={styles.grid}>
-          {shown.length === 0 ? (
-            <View style={styles.flex}>
-              <EmptyState icon="admin-panel-settings" title="No administrators" subtitle="No administrator accounts were returned." />
-            </View>
-          ) : (
-            cardWidth ? shown.map(item => (
-              <View key={item.uid} style={{ width: cardWidth }}>
-                <AdminCard
-                  admin={item}
-                  isSelf={item.uid === currentAdmin.uid}
-                  canManage={isSuperAdmin}
-                  onEdit={() => push({ name: 'adminForm', admin: item })}
-                  onDelete={() => setSelected(item)}
-                />
-              </View>
-            )) : null
-          )}
-        </View>
-      </ScrollPage>
-      <ConfirmModal
-        visible={Boolean(selected)}
-        onClose={() => setSelected(null)}
-        onConfirm={() => void confirmDelete()}
-        title="Delete Administrator?"
-        subtitle={`Are you sure you want to delete ${[selected?.firstname, selected?.lastname].filter(Boolean).join(' ') || `the administrator with UID "${selected?.uid}"`}? This action cannot be undone.`}
-        confirmText="Delete"
-        loading={deleting}
-      />
-    </>
-  );
-}
-
 // Super admins create every admin type except department reps (B), whom
 // each school's institution rep adds from their own Access Control tab.
 const ROLE_OPTIONS = [
@@ -327,7 +196,7 @@ export function AdminForm({ admin }: { admin?: AdminUser }) {
         title={editing ? 'Edit iCampus Administrator' : 'Create iCampus Administrator'}
         subtitle={editing ? `Managing ${form.firstname}` : 'Add new system admin'}
       />
-      <ScrollView contentContainerStyle={styles.form} showsVerticalScrollIndicator={false}>
+      <ScrollPage contentContainerStyle={styles.form}>
         <Field label="First Name" value={form.firstname} onChangeText={value => setForm({ ...form, firstname: value })} />
         <Field label="Last Name" value={form.lastname} onChangeText={value => setForm({ ...form, lastname: value })} />
         <Field
@@ -357,7 +226,7 @@ export function AdminForm({ admin }: { admin?: AdminUser }) {
           />
         ) : null}
         <Button title={saving ? 'Saving...' : 'Save Changes'} onPress={() => void save()} loading={saving} disabled={!valid} style={styles.submit} />
-      </ScrollView>
+      </ScrollPage>
     </View>
   );
 }
@@ -365,13 +234,6 @@ export function AdminForm({ admin }: { admin?: AdminUser }) {
 const useStyles = makeStyles(c =>
   StyleSheet.create({
     flex: { flex: 1, minWidth: 0 },
-    list: { paddingBottom: 120 },
-    headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    filters: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 18 },
-    filter: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 7, paddingHorizontal: 14, borderRadius: 999, borderWidth: 1 },
-    filterText: { fontSize: 13, fontWeight: '700' },
-    filterCount: { fontSize: 12, fontWeight: '800' },
-    grid: { flexDirection: 'row', flexWrap: 'wrap', gap: GAP },
     card: {
       borderRadius: 22,
       overflow: 'hidden',

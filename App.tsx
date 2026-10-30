@@ -19,12 +19,12 @@ import { AdminFab } from './src/Fab';
 import { Icon, IconName } from './src/icons';
 import { Logo } from './src/Logo';
 import { ActivityLogs } from './src/screens/ActivityLogs';
-import { AdminActivityScreen, AdminDetail, MessageAdmins, SuperAccessControl } from './src/screens/AccessControl';
+import { AdminActivityScreen, AdminDetail, MessageAdmins, StaffAccessControl } from './src/screens/AccessControl';
 import { FinanceOverview, FinanceSection, SchoolBillingTab } from './src/screens/Finance';
 import { SchoolUsers } from './src/screens/SchoolUsers';
 import { SocialOverview } from './src/screens/Social';
 import { StaffNotifications } from './src/screens/StaffNotifications';
-import { AdminForm, AdminManagement } from './src/screens/Admins';
+import { AdminForm } from './src/screens/Admins';
 import { Login } from './src/screens/Login';
 import { AdForm, AdsList, InstitutionForm, InstitutionsList, StationForm, StationsList, TaxEntries } from './src/screens/Manage';
 import { Overview } from './src/screens/Overview';
@@ -49,7 +49,7 @@ const TAB_META: Record<Tab, { icon: IconName; description: string }> = {
   'Admin Actions': { icon: 'account-circle', description: 'Profile changes and administrator actions.' },
   Subscriptions: { icon: 'verified', description: 'Subscription and plan activity.' },
   Store: { icon: 'shopping-cart', description: 'Marketplace and store activity.' },
-  'Access Control': { icon: 'admin-panel-settings', description: 'Manage system administrators and team access.' },
+  'Access Control': { icon: 'admin-panel-settings', description: "The iCampus team, then each institution's representative and the department reps they added." },
   Notifications: { icon: 'notifications-active', description: 'Send announcements to your students, lecturers and representatives.' },
   Institutions: { icon: 'school', description: 'Manage the iCampus network of authorized institutions.' },
   'Drop-off Stations': { icon: 'storefront', description: 'Manage authorized parcel drop-off locations.' },
@@ -58,7 +58,7 @@ const TAB_META: Record<Tab, { icon: IconName; description: string }> = {
   'Tax Entries': { icon: 'receipt-long', description: 'All recorded tax transactions and monthly reports.' },
 };
 
-function TabContent({ tab, schoolAdmin, superAdmin }: { tab: Tab; schoolAdmin: boolean; superAdmin: boolean }) {
+function TabContent({ tab, schoolAdmin }: { tab: Tab; schoolAdmin: boolean }) {
   const category = LOG_CATEGORIES[tab];
   if (category) return <ActivityLogs key={tab} category={category} label={tab} />;
   switch (tab) {
@@ -73,7 +73,7 @@ function TabContent({ tab, schoolAdmin, superAdmin }: { tab: Tab; schoolAdmin: b
     case 'Tickets':
       return <TicketsSection />;
     case 'Access Control':
-      return schoolAdmin ? <SchoolReps /> : superAdmin ? <SuperAccessControl /> : <AdminManagement />;
+      return schoolAdmin ? <SchoolReps /> : <StaffAccessControl />;
     case 'Notifications':
       return schoolAdmin ? <SchoolNotifications /> : <StaffNotifications />;
     case 'Institutions':
@@ -232,7 +232,7 @@ function Dashboard({ session, onLogout }: { session: AdminSession; onLogout: () 
                 </View>
               </Pressable>
 
-              <ScrollView style={styles.sidebarNav} contentContainerStyle={styles.sidebarNavContent} showsVerticalScrollIndicator={false}>
+              <ScrollView style={styles.sidebarNav} contentContainerStyle={styles.sidebarNavContent} showsVerticalScrollIndicator>
                 <Text style={styles.sidebarLabel}>WORKSPACE</Text>
                 {visibleTabs.map(item => {
                   const selected = item === tab;
@@ -283,6 +283,7 @@ function Dashboard({ session, onLogout }: { session: AdminSession; onLogout: () 
                   active={tab}
                   onChange={navigation.setTab}
                   style={styles.compactStrip}
+                  scrollbar
                 />
               </View>
             ) : null}
@@ -295,7 +296,7 @@ function Dashboard({ session, onLogout }: { session: AdminSession; onLogout: () 
                 {/* The overview scrolls its intro with the page; list tabs keep it pinned above their list. */}
                 {tab === 'Overview' ? null : intro}
                 <View style={styles.flex}>
-                  {tab === 'Overview' ? <Overview header={intro} /> : <TabContent tab={tab} schoolAdmin={schoolAdmin} superAdmin={admin.adminType === 'super_admin'} />}
+                  {tab === 'Overview' ? <Overview header={intro} /> : <TabContent tab={tab} schoolAdmin={schoolAdmin} />}
                 </View>
               </ScreenTransition>
             )}

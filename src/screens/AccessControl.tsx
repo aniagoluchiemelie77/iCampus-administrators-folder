@@ -1,6 +1,16 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
-import { AdminUser, Attachment, deleteAdmin, DirectoryAdmin, getAdminActivity, getAdminDirectory, getAdminProfile, notifyAdmins } from '../api';
+import {
+  AdminDirectory,
+  AdminUser,
+  Attachment,
+  deleteAdmin,
+  DirectoryAdmin,
+  getAdminActivity,
+  getAdminDirectory,
+  getAdminProfile,
+  notifyAdmins,
+} from '../api';
 import { MeterRow } from '../charts';
 import { AttachmentPicker, Cell, Grid, StatCard, StatRow } from '../dashboard';
 import { errorMessage, normalizeRole, useNavigation, useSession, useToast } from '../context';
@@ -29,16 +39,20 @@ import { AdminCard, fullName, roleMeta } from './Admins';
 import { SchoolBillingCard } from './Finance';
 
 /**
- * Super admin access control: the iCampus team, then every school's
- * institution representative (A-level). Each opens a detail screen with the
- * school, its department reps, and what the admin has been doing.
+ * Access control for the iCampus team: staff admins first, then each school's
+ * institution representative (A-level), a page at a time. An A rep opens a
+ * detail screen with their school and the department reps (B) they added.
+ * Every staff role can look; only super admins add, edit, remove, message
+ * or see what admins have been doing (also enforced by the backend).
  */
 
 type Data = Record<string, any>;
 
 const lastSeen = (value: unknown) => (value ? `${fromNow(value)}` : 'Never signed in');
+/** Finance and super admins see school billing; other staff see the plan only. */
+const seesBilling = (adminType: string) => adminType === 'super_admin' || adminType === 'finance';
 
-function SchoolAdminCard({ admin, onPress }: { admin: DirectoryAdmin; onPress: () => void }) {
+function SchoolAdminCard({ admin, showBilling, onPress }: { admin: DirectoryAdmin; showBilling: boolean; onPress: () => void }) {
   const colors = useColors();
   const styles = useStyles();
   const limit = admin.bRepsLimit;
@@ -85,35 +99,60 @@ function SchoolAdminCard({ admin, onPress }: { admin: DirectoryAdmin; onPress: (
       <View style={styles.schoolFoot}>
         <View style={[styles.presence, { backgroundColor: admin.lastAccessed ? colors.success : colors.textMuted }]} />
         <Text style={[styles.meta, styles.flex]}>Last active {lastSeen(admin.lastAccessed)}</Text>
-        <Pill label={formatLabel(admin.billingStatus || 'not_set').toUpperCase()} color={billingTone} />
+        {showBilling ? <Pill label={formatLabel(admin.billingStatus || 'not_set').toUpperCase()} color={billingTone} /> : null}
       </View>
     </Pressable>
   );
 }
 
-export function SuperAccessControl() {
+export function StaffAccessControl() {
   const { admin: me } = useSession();
   const { push } = useNavigation();
   const toast = useToast();
   const colors = useColors();
   const styles = useStyles();
-  const [data, setData] = useState<{ admins: DirectoryAdmin[]; schoolAdmins: DirectoryAdmin[]; departmentReps: number } | null>(null);
+  const superAdmin = me.adminType === 'super_admin';
+  const showBilling = seesBilling(me.adminType);
+  const [data, setData] = useState<Omit<AdminDirectory, 'schoolAdmins'> | null>(null);
+  const [reps, setReps] = useState<DirectoryAdmin[]>([]);
+  const [repsPage, setRepsPage] = useState({ page: 1, totalPages: 1, total: 0 });
+  const [loadingMore, setLoadingMore] = useState(false);
   const [role, setRole] = useState('all');
   const [query, setQuery] = useState('');
+  const [search, setSearch] = useState('');
   const [removing, setRemoving] = useState<AdminUser | null>(null);
   const [busy, setBusy] = useState(false);
+  // Drops a slow page that lands after the search has changed.
+  const latest = useRef(0);
 
-  const load = useCallback(async () => {
-    try {
-      setData(await getAdminDirectory());
-    } catch (reason) {
-      toast('error', errorMessage(reason), 'Fetch Error');
-    }
-  }, [toast]);
+  /** Page 1 replaces the institution reps; later pages add the next batch. */
+  const load = useCallback(
+    async (page = 1) => {
+      const request = ++latest.current;
+      if (page > 1) setLoadingMore(true);
+      try {
+        const result = await getAdminDirectory({ page, q: search });
+        if (request !== latest.current) return;
+        setData({ admins: result.admins, totals: result.totals });
+        setReps(previous => (page === 1 ? result.schoolAdmins.items : [...previous, ...result.schoolAdmins.items]));
+        setRepsPage({ page: result.schoolAdmins.page, totalPages: result.schoolAdmins.totalPages, total: result.schoolAdmins.total });
+      } catch (reason) {
+        toast('error', errorMessage(reason), 'Fetch Error');
+      } finally {
+        if (request === latest.current) setLoadingMore(false);
+      }
+    },
+    [search, toast],
+  );
 
   useEffect(() => {
-    void load();
+    void load(1);
   }, [load]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setSearch(query.trim()), 350);
+    return () => clearTimeout(timer);
+  }, [query]);
 
   const remove = async () => {
     if (!removing) return;
@@ -122,7 +161,7 @@ export function SuperAccessControl() {
       await deleteAdmin(removing.uid);
       toast('success', 'Administrator removed.', 'Removed');
       setRemoving(null);
-      await load();
+      await load(1);
     } catch (reason) {
       toast('error', errorMessage(reason), 'Remove failed');
     } finally {
@@ -133,17 +172,28 @@ export function SuperAccessControl() {
   if (!data) return <Loading />;
   const roles = [...new Set(data.admins.map(a => normalizeRole(a.adminType)))];
   const team = role === 'all' ? data.admins : data.admins.filter(a => a.adminType === role);
-  const q = query.trim().toLowerCase();
-  const schools = data.schoolAdmins.filter(a => !q || [a.schoolName, a.firstname, a.lastname, a.email, a.schoolCode].some(v => String(v || '').toLowerCase().includes(q)));
-  const activeWeek = [...data.admins, ...data.schoolAdmins].filter(a => a.lastAccessed && Date.now() - new Date(String(a.lastAccessed)).getTime() < 7 * 86400000).length;
+  const openAdmin = (uid: string) => push({ name: 'adminDetail', uid });
 
   return (
     <>
       <ScrollPage contentContainerStyle={styles.page}>
         <StatRow>
           <StatCard icon="shield" label="iCampus team" tone={colors.primary} value={formatCount(data.admins.length)} hint={`${roles.length} roles`} />
-          <StatCard icon="account-balance" label="Institution reps (A)" tone={colors.pendingDelivery} value={formatCount(data.schoolAdmins.length)} hint={`${formatCount(data.departmentReps)} department reps (B) under them`} />
-          <StatCard icon="bolt" label="Active this week" tone={colors.success} value={formatCount(activeWeek)} hint="Signed in during the last 7 days" onPress={() => push({ name: 'adminActivity' })} />
+          <StatCard
+            icon="account-balance"
+            label="Institution reps (A)"
+            tone={colors.pendingDelivery}
+            value={formatCount(data.totals.schoolAdmins)}
+            hint={`${formatCount(data.totals.departmentReps)} department reps (B) under them`}
+          />
+          <StatCard
+            icon="bolt"
+            label="Active this week"
+            tone={colors.success}
+            value={formatCount(data.totals.activeThisWeek)}
+            hint="Signed in during the last 7 days"
+            onPress={superAdmin ? () => push({ name: 'adminActivity' }) : undefined}
+          />
         </StatRow>
 
         <SectionHeader
@@ -152,10 +202,14 @@ export function SuperAccessControl() {
           subtitle="Staff administrators with portal access"
           right={
             <View style={styles.actions}>
-              <IconButton filled size={19} icon="refresh" label="Refresh" onPress={() => void load()} />
-              <Button compact variant="soft" icon="history" title="Activity" onPress={() => push({ name: 'adminActivity' })} />
-              <Button compact variant="soft" icon="send" title="Message" onPress={() => push({ name: 'messageAdmins' })} />
-              <Button compact icon="person-add-alt" title="Add Admin" onPress={() => push({ name: 'adminForm' })} />
+              <IconButton filled size={19} icon="refresh" label="Refresh" onPress={() => void load(1)} />
+              {superAdmin ? (
+                <>
+                  <Button compact variant="soft" icon="history" title="Activity" onPress={() => push({ name: 'adminActivity' })} />
+                  <Button compact variant="soft" icon="send" title="Message" onPress={() => push({ name: 'messageAdmins' })} />
+                  <Button compact icon="person-add-alt" title="Add Admin" onPress={() => push({ name: 'adminForm' })} />
+                </>
+              ) : null}
             </View>
           }
         />
@@ -163,7 +217,10 @@ export function SuperAccessControl() {
           <FilterChips
             value={role}
             onChange={setRole}
-            options={[{ value: 'all', label: 'All roles', count: data.admins.length }, ...roles.map(r => ({ value: r, label: formatLabel(r), count: data.admins.filter(a => a.adminType === r).length }))]}
+            options={[
+              { value: 'all', label: 'All roles', count: data.admins.length },
+              ...roles.map(r => ({ value: r, label: formatLabel(r), count: data.admins.filter(a => a.adminType === r).length })),
+            ]}
           />
         ) : null}
         <View style={styles.grid}>
@@ -172,8 +229,8 @@ export function SuperAccessControl() {
               <AdminCard
                 admin={item}
                 isSelf={item.uid === me.uid}
-                canManage
-                onOpen={() => push({ name: 'adminDetail', uid: item.uid })}
+                canManage={superAdmin}
+                onOpen={superAdmin ? () => openAdmin(item.uid) : undefined}
                 onEdit={() => push({ name: 'adminForm', admin: item })}
                 onDelete={() => setRemoving(item)}
               />
@@ -182,19 +239,37 @@ export function SuperAccessControl() {
         </View>
 
         <View style={styles.sectionGap} />
-        <SectionHeader icon="account-balance" title="Institution representatives" subtitle="A-level school admins · open one for their school, reps and activity" />
-        <Field icon="search" placeholder="Search by school, name or email" value={query} onChangeText={setQuery} />
-        {schools.length === 0 ? (
-          <EmptyState icon="account-balance" title="No institution reps" subtitle={q ? `No results for "${query}".` : 'Add one with "Add Admin" when a school signs its contract.'} />
+        <SectionHeader
+          icon="account-balance"
+          title="Institution representatives"
+          subtitle="A-level school admins · open one for their school and the department reps they added"
+        />
+        <Field icon="search" placeholder="Search by school, name, email or code" value={query} onChangeText={setQuery} />
+        {reps.length === 0 ? (
+          <EmptyState
+            icon="account-balance"
+            title="No institution reps"
+            subtitle={search ? `No results for "${search}".` : superAdmin ? 'Add one with "Add Admin" when a school signs its contract.' : 'None have been added yet.'}
+          />
         ) : (
           <View style={styles.grid}>
-            {schools.map(item => (
+            {reps.map(item => (
               <View key={item.uid} style={styles.gridCell}>
-                <SchoolAdminCard admin={item} onPress={() => push({ name: 'adminDetail', uid: item.uid })} />
+                <SchoolAdminCard admin={item} showBilling={showBilling} onPress={() => openAdmin(item.uid)} />
               </View>
             ))}
           </View>
         )}
+        {reps.length > 0 ? (
+          <View style={styles.pager}>
+            <Text style={styles.meta}>
+              Showing {formatCount(reps.length)} of {formatCount(repsPage.total)}
+            </Text>
+            {repsPage.page < repsPage.totalPages ? (
+              <Button compact variant="outline" icon="expand-more" title="Show more" loading={loadingMore} onPress={() => void load(repsPage.page + 1)} />
+            ) : null}
+          </View>
+        ) : null}
       </ScrollPage>
       <ConfirmModal
         visible={Boolean(removing)}
@@ -259,12 +334,31 @@ export function ActivityRow({ entry, showActor = false }: { entry: Data; showAct
   );
 }
 
+function RepRow({ rep, onPress }: { rep: Data; onPress: () => void }) {
+  const colors = useColors();
+  const styles = useStyles();
+  return (
+    <Pressable onPress={onPress} style={({ hovered }: any) => [styles.repRow, hovered && { backgroundColor: colors.primary + '08' }]}>
+      <UserAvatar profilePic={rep.profilePic} firstName={rep.firstname} lastName={rep.lastname} size={36} />
+      <View style={styles.flex}>
+        <Text numberOfLines={1} style={styles.rowTitle}>{fullName(rep as AdminUser)}</Text>
+        <Text numberOfLines={1} style={styles.meta}>
+          {rep.adminType === 'school_admin_a' ? 'Institution rep' : rep.department || 'No department'} · {lastSeen(rep.lastAccessed)}
+        </Text>
+      </View>
+      <Icon name="chevron-right" size={18} color={colors.textMuted} />
+    </Pressable>
+  );
+}
+
 export function AdminDetail({ uid }: { uid: string }) {
+  const { admin: me } = useSession();
   const { push } = useNavigation();
   const toast = useToast();
   const colors = useColors();
   const styles = useStyles();
   const [data, setData] = useState<Data | null>(null);
+  const superAdmin = me.adminType === 'super_admin';
 
   useEffect(() => {
     getAdminProfile(uid)
@@ -284,16 +378,27 @@ export function AdminDetail({ uid }: { uid: string }) {
   const role = roleMeta(a.adminType, colors);
   const school = data.school as Data | null;
   const reps = data.reps as Data[];
+  const isA = a.adminType === 'school_admin_a';
   const bReps = reps.filter(r => r.adminType === 'school_admin_b');
-  const otherA = reps.filter(r => r.adminType === 'school_admin_a');
+  const aSeatsUsed = reps.filter(r => r.adminType === 'school_admin_a').length + (isA ? 1 : 0);
+  const bSeatsUsed = bReps.length + (isA ? 0 : 1);
+  const added = reps.filter(r => r.addedByThisAdmin);
+  const others = reps.filter(r => !r.addedByThisAdmin);
   const staff = !a.schoolCode;
+  // The server only sends billing (status, amount, due date) to finance and super admins.
+  const billing = Boolean(school?.status);
+  const openRep = (rep: Data) => push({ name: 'adminDetail', uid: rep.uid });
 
   return (
     <View style={styles.flex}>
       <PageHeader
         title={fullName(a)}
-        subtitle={role.label}
-        right={<IconButton filled icon="send" label={`Message ${a.firstname}`} onPress={() => push({ name: 'messageAdmins', uids: [a.uid], label: fullName(a) })} />}
+        subtitle={school ? `${role.label} · ${school.name}` : role.label}
+        right={
+          superAdmin ? (
+            <IconButton filled icon="send" label={`Message ${a.firstname}`} onPress={() => push({ name: 'messageAdmins', uids: [a.uid], label: fullName(a) })} />
+          ) : undefined
+        }
       />
       <ScrollPage contentContainerStyle={styles.detail}>
         <View style={styles.hero}>
@@ -313,6 +418,7 @@ export function AdminDetail({ uid }: { uid: string }) {
               <Text style={styles.meta}>{a.email}</Text>
               <View style={styles.pills}>
                 <Pill label={role.label.toUpperCase()} icon={role.icon} color={role.tone} />
+                {school ? <Pill label={String(school.name)} icon="account-balance" color={colors.pendingDelivery} /> : null}
                 {a.department ? <Pill label={String(a.department)} icon="apartment" color={colors.info} /> : null}
               </View>
             </View>
@@ -321,7 +427,7 @@ export function AdminDetail({ uid }: { uid: string }) {
             <Fact icon="schedule" label="Last accessed" value={a.lastAccessed ? `${fromNow(a.lastAccessed)} · ${formatDate(a.lastAccessed, true)}` : 'Never signed in'} />
             <Fact icon="event" label="Admin since" value={a.createdAt ? formatDate(a.createdAt) : '—'} />
             <Fact icon="person" label="Added by" value={data.invitedBy ? fullName(data.invitedBy as AdminUser) : '—'} />
-            <Fact icon="bolt" label="Actions (30 days)" value={formatCount(data.stats.actionsLast30Days)} />
+            {data.stats ? <Fact icon="bolt" label="Actions (30 days)" value={formatCount(data.stats.actionsLast30Days)} /> : null}
           </View>
         </View>
 
@@ -329,14 +435,14 @@ export function AdminDetail({ uid }: { uid: string }) {
           <Grid>
             <Cell>
               <Card>
-                <SectionHeader icon="school" title="Institution" subtitle={`${school.tierLabel} plan`} />
-                <SchoolBillingCard school={school} onPress={() => push({ name: 'financeSection', section: 'schools' })} />
+                <SectionHeader icon="school" title="Institution" subtitle={`${school.name} · ${school.tierLabel} plan`} />
+                {billing ? <SchoolBillingCard school={school} onPress={() => push({ name: 'financeSection', section: 'schools' })} /> : null}
                 <Text style={styles.subTitle}>Seats on this plan</Text>
-                <MeterRow label="Institution reps (A)" value={otherA.length + 1} max={school.seats?.a ?? otherA.length + 1} unit={` of ${school.seats?.a ?? '∞'}`} color={colors.pendingDelivery} />
+                <MeterRow label="Institution reps (A)" value={aSeatsUsed} max={school.seats?.a ?? aSeatsUsed} unit={` of ${school.seats?.a ?? '∞'}`} color={colors.pendingDelivery} />
                 <MeterRow
                   label="Department reps (B)"
-                  value={bReps.length}
-                  max={school.seats?.b ?? Math.max(1, bReps.length)}
+                  value={bSeatsUsed}
+                  max={school.seats?.b ?? Math.max(1, bSeatsUsed)}
                   unit={school.seats?.b == null ? ' (unlimited)' : ` of ${school.seats.b}`}
                   color={colors.info}
                 />
@@ -344,37 +450,45 @@ export function AdminDetail({ uid }: { uid: string }) {
             </Cell>
             <Cell>
               <Card>
-                <SectionHeader icon="apartment" title="Department reps" subtitle={`${bReps.length} at this school · ${bReps.filter(r => r.addedByThisAdmin).length} added by ${a.firstname}`} />
-                {reps.length === 0 ? <Text style={styles.meta}>No other representatives yet.</Text> : null}
-                {reps.map(rep => (
-                  <Pressable key={rep.uid} onPress={() => push({ name: 'adminDetail', uid: rep.uid })} style={({ hovered }: any) => [styles.repRow, hovered && { backgroundColor: colors.primary + '08' }]}>
-                    <UserAvatar profilePic={rep.profilePic} firstName={rep.firstname} lastName={rep.lastname} size={36} />
-                    <View style={styles.flex}>
-                      <Text numberOfLines={1} style={styles.rowTitle}>{fullName(rep as AdminUser)}</Text>
-                      <Text numberOfLines={1} style={styles.meta}>
-                        {rep.adminType === 'school_admin_a' ? 'Institution rep' : rep.department || 'No department'} · {lastSeen(rep.lastAccessed)}
-                      </Text>
-                    </View>
-                    {rep.addedByThisAdmin ? <Pill label="ADDED BY THEM" color={colors.success} /> : null}
-                  </Pressable>
+                <SectionHeader
+                  icon="apartment"
+                  title={`Department reps added by ${a.firstname || 'them'}`}
+                  subtitle={`${added.length} added · ${bReps.length} department reps at ${school.name}`}
+                />
+                {added.length === 0 ? (
+                  <Text style={styles.meta}>{isA ? `${a.firstname || 'They'} hasn't added any department reps yet.` : 'Department reps are added by institution reps.'}</Text>
+                ) : null}
+                {added.map(rep => (
+                  <RepRow key={rep.uid} rep={rep} onPress={() => openRep(rep)} />
                 ))}
               </Card>
             </Cell>
           </Grid>
         ) : null}
 
-        <Card>
-          <SectionHeader
-            icon="history"
-            title="Recent activity"
-            subtitle={staff ? 'Changes, messages and exports in the portal' : 'Portal actions and the school audit log'}
-            onViewAll={() => push({ name: 'adminActivity', actorUid: a.uid, title: fullName(a) })}
-          />
-          {data.activity.length === 0 ? <Text style={styles.meta}>Nothing recorded yet.</Text> : null}
-          {data.activity.map((entry: Data) => (
-            <ActivityRow key={entry.id} entry={entry} />
-          ))}
-        </Card>
+        {school && others.length > 0 ? (
+          <Card>
+            <SectionHeader icon="groups" title={`Other representatives at ${school.name}`} subtitle="Added by someone else" />
+            {others.map(rep => (
+              <RepRow key={rep.uid} rep={rep} onPress={() => openRep(rep)} />
+            ))}
+          </Card>
+        ) : null}
+
+        {data.activity ? (
+          <Card>
+            <SectionHeader
+              icon="history"
+              title="Recent activity"
+              subtitle={staff ? 'Changes, messages and exports in the portal' : 'Portal actions and the school audit log'}
+              onViewAll={() => push({ name: 'adminActivity', actorUid: a.uid, title: fullName(a) })}
+            />
+            {data.activity.length === 0 ? <Text style={styles.meta}>Nothing recorded yet.</Text> : null}
+            {data.activity.map((entry: Data) => (
+              <ActivityRow key={entry.id} entry={entry} />
+            ))}
+          </Card>
+        ) : null}
       </ScrollPage>
     </View>
   );

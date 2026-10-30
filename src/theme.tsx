@@ -106,7 +106,13 @@ const ThemeContext = createContext<ThemeState | null>(null);
 // Lets backgrounds and borders cross-fade when the theme flips, instead of snapping.
 const WEB_TRANSITION_CSS =
   '[data-theme-ready] div, [data-theme-ready] span, [data-theme-ready] input, [data-theme-ready] textarea {' +
-  ' transition: background-color 280ms ease, border-color 280ms ease, color 200ms ease; }';
+  ' transition: background-color 280ms ease, border-color 280ms ease, color 200ms ease; }' +
+  // Thin, theme-coloured scrollbars wherever a scroller shows one (scrollers
+  // that hide theirs keep doing so: react-native-web's class rule wins).
+  ' * { scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) transparent; }' +
+  ' *::-webkit-scrollbar { width: 10px; height: 8px; }' +
+  ' *::-webkit-scrollbar-track { background: transparent; }' +
+  ' *::-webkit-scrollbar-thumb { background-color: var(--scrollbar-thumb); border-radius: 8px; border: 2px solid transparent; background-clip: content-box; }';
 
 /** Light / dark / system theme. The choice is remembered per browser. */
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
@@ -126,8 +132,10 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+    const palette = scheme === 'dark' ? darkPalette : lightPalette;
     document.documentElement.style.colorScheme = scheme;
-    document.body.style.backgroundColor = (scheme === 'dark' ? darkPalette : lightPalette).background;
+    document.documentElement.style.setProperty('--scrollbar-thumb', palette.textMuted + '73');
+    document.body.style.backgroundColor = palette.background;
   }, [scheme]);
 
   useEffect(() => {

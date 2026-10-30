@@ -293,7 +293,7 @@ export function AdminSearch() {
             keyExtractor={(item, index) => String(item.postId || item.uid || item.productId || item.id || item._id || index)}
             renderItem={renderItem}
             contentContainerStyle={styles.list}
-            showsVerticalScrollIndicator={false}
+            showsVerticalScrollIndicator
             ListEmptyComponent={
               <EmptyState
                 icon={short ? 'search' : 'find-in-page'}

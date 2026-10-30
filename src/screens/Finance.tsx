@@ -1,6 +1,14 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
-import { exportFinanceData, FinancePeriod, getFinanceOverview, getFinanceSection, updateSchoolBilling } from '../api';
+import {
+  DISPLAY_CURRENCIES,
+  DisplayCurrency,
+  exportFinanceData,
+  FinancePeriod,
+  getFinanceOverview,
+  getFinanceSection,
+  updateSchoolBilling,
+} from '../api';
 import { AreaChart, DonutChart, MeterRow, StackedBarChart } from '../charts';
 import { Cell, ExportButton, ExportOption, fmtPct, Grid, StatCard, StatRow, Tiles } from '../dashboard';
 import { errorMessage, FinanceSectionId, useNavigation, useToast } from '../context';
@@ -9,6 +17,7 @@ import { Colors, makeStyles, useColors } from '../theme';
 import {
   Button,
   Card,
+  currencySign,
   EmptyState,
   Field,
   FilterChips,
@@ -28,12 +37,59 @@ import {
 
 /**
  * Finance dashboard: the year in three four-month periods (P1 Jan–Apr,
- * P2 May–Aug, P3 Sep–Dec). Money is shown in one currency at a time; counts
- * are currency-free. Used as the finance admin's Overview and the super
- * admin's Finance tab.
+ * P2 May–Aug, P3 Sep–Dec). Every amount is converted on the server into one
+ * display currency (NGN or USD) before it's summed; list rows keep their
+ * original amount and show the converted one beside it. Counts are
+ * currency-free. Used as the finance admin's Overview and the super admin's
+ * Finance tab.
  */
 
 type Data = Record<string, any>;
+
+const CURRENCY_KEY = 'icampus-admin-finance-currency';
+
+/** The display currency, remembered per browser and shared by the dashboard and its lists. */
+const useDisplayCurrency = () => {
+  const [currency, setCurrencyState] = useState<DisplayCurrency>(() => {
+    try {
+      const stored = localStorage.getItem(CURRENCY_KEY);
+      return (DISPLAY_CURRENCIES as readonly string[]).includes(stored ?? '') ? (stored as DisplayCurrency) : 'NGN';
+    } catch {
+      return 'NGN';
+    }
+  });
+  const setCurrency = useCallback((next: DisplayCurrency) => {
+    setCurrencyState(next);
+    try {
+      localStorage.setItem(CURRENCY_KEY, next);
+    } catch {
+      // Storage can be blocked (private mode); the choice then lasts for this visit.
+    }
+  }, []);
+  return [currency, setCurrency] as const;
+};
+
+/** "1 USD = ₦1,540.25 · rates updated hourly", or why figures may be incomplete. */
+const conversionNote = (conversion: Data | undefined) => {
+  if (!conversion) return '';
+  if (!conversion.live) return ` · live exchange rates unavailable, so only amounts already in ${conversion.currency} are counted`;
+  const ngn = conversion.usdRates?.NGN;
+  const rate = ngn ? ` · 1 USD = ${formatMoney(ngn, 'NGN')}` : '';
+  const skipped = conversion.unconverted?.length ? ` · not converted: ${conversion.unconverted.join(', ')}` : '';
+  return `${rate}${skipped}`;
+};
+
+/** An amount in its own currency, with the display-currency equivalent when they differ. */
+function Amount({ value, currency, item, style }: { value: number; currency: string; item: Data; style?: any }) {
+  const styles = useStyles();
+  const converted = item.displayCurrency && item.displayCurrency !== currency && item.displayAmount != null;
+  return (
+    <>
+      <Text style={[styles.rowTitle, style]}>{formatMoney(value, currency)}</Text>
+      {converted ? <Text style={styles.meta}>≈ {formatMoney(item.displayAmount, item.displayCurrency)}</Text> : null}
+    </>
+  );
+}
 
 const PERIOD_OPTIONS = [
   { value: '1', label: 'P1 · Jan–Apr' },
@@ -129,9 +185,13 @@ const dueText = (school: Data) =>
         ? 'Due today'
         : `Due in ${school.daysLeft} day${school.daysLeft === 1 ? '' : 's'}`;
 
+/** Lists whose rows carry money, so they get the currency switch. */
+const MONEY_SECTIONS = new Set<FinanceSectionId>(['transactions', 'orders', 'payments', 'schools']);
+
 function PeriodBar({
   year,
   period,
+  showPeriod = true,
   onChange,
   currency,
   currencies,
@@ -140,24 +200,33 @@ function PeriodBar({
 }: {
   year: number;
   period: FinancePeriod;
+  showPeriod?: boolean;
   onChange: (year: number, period: FinancePeriod) => void;
-  currency?: string;
-  currencies?: string[];
-  onCurrency?: (currency: string) => void;
+  currency?: DisplayCurrency;
+  currencies?: readonly DisplayCurrency[];
+  onCurrency?: (currency: DisplayCurrency) => void;
   right?: React.ReactNode;
 }) {
   const styles = useStyles();
   const thisYear = new Date().getFullYear();
   return (
     <View style={styles.periodBar}>
-      <FilterChips
-        value={String(year)}
-        onChange={value => onChange(Number(value), period)}
-        options={[thisYear - 2, thisYear - 1, thisYear].map(y => ({ value: String(y), label: String(y) }))}
-      />
-      <FilterChips value={String(period)} onChange={value => onChange(year, value === 'all' ? 'all' : Number(value))} options={PERIOD_OPTIONS} />
-      {currencies && currencies.length > 1 && onCurrency ? (
-        <FilterChips value={currency ?? currencies[0]} onChange={onCurrency} options={currencies.map(c => ({ value: c, label: c }))} />
+      {showPeriod ? (
+        <>
+          <FilterChips
+            value={String(year)}
+            onChange={value => onChange(Number(value), period)}
+            options={[thisYear - 2, thisYear - 1, thisYear].map(y => ({ value: String(y), label: String(y) }))}
+          />
+          <FilterChips value={String(period)} onChange={value => onChange(year, value === 'all' ? 'all' : Number(value))} options={PERIOD_OPTIONS} />
+        </>
+      ) : null}
+      {currency && currencies && onCurrency ? (
+        <FilterChips
+          value={currency}
+          onChange={onCurrency}
+          options={currencies.map(c => ({ value: c, label: `${currencySign(c).trim()} ${c}` }))}
+        />
       ) : null}
       <View style={styles.flex} />
       {right}
@@ -192,7 +261,7 @@ export function SchoolBillingCard({ school, onPress }: { school: Data; onPress?:
         </View>
         <View style={styles.right}>
           <Text style={styles.footLabel}>AMOUNT</Text>
-          <Text style={styles.rowTitle}>{school.amount != null ? formatMoney(school.amount, school.currency) : '—'}</Text>
+          {school.amount != null ? <Amount value={school.amount} currency={school.currency} item={school} /> : <Text style={styles.rowTitle}>—</Text>}
           <Text style={styles.meta}>{school.lastPaidAt ? `Paid ${fromNow(school.lastPaidAt)}` : 'No payment recorded'}</Text>
         </View>
       </View>
@@ -208,7 +277,7 @@ export function FinanceOverview({ header }: { header?: React.ReactNode }) {
   const { push } = useNavigation();
   const [year, setYear] = useState(new Date().getFullYear());
   const [period, setPeriod] = useState<FinancePeriod>(Math.floor(new Date().getMonth() / 4) + 1);
-  const [currency, setCurrency] = useState<string | undefined>();
+  const [currency, setCurrency] = useDisplayCurrency();
   const [data, setData] = useState<Data | null>(null);
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
@@ -258,8 +327,8 @@ export function FinanceOverview({ header }: { header?: React.ReactNode }) {
           setYear(y);
           setPeriod(p);
         }}
-        currency={cur}
-        currencies={data.currencies}
+        currency={currency}
+        currencies={DISPLAY_CURRENCIES}
         onCurrency={setCurrency}
         right={
           <ExportButton
@@ -267,12 +336,13 @@ export function FinanceOverview({ header }: { header?: React.ReactNode }) {
             title="Export finance report"
             scopeNote={`${data.period.label}. Subscribers and schools are exported as they stand today.`}
             options={EXPORT_OPTIONS}
-            onExport={sections => exportFinanceData({ sections, year, period })}
+            onExport={sections => exportFinanceData({ sections, year, period, currency })}
           />
         }
       />
       <Text style={[styles.meta, styles.periodNote]}>
-        {data.period.label} · compared with {data.previousLabel} · amounts in {cur}
+        {data.period.label} · compared with {data.previousLabel} · all amounts converted to {cur}
+        {conversionNote(data.conversion)}
         {failed ? ' · showing the last loaded data' : loading ? ' · updating…' : ''}
       </Text>
 
@@ -479,7 +549,7 @@ export function FinanceOverview({ header }: { header?: React.ReactNode }) {
         </Card>
 
         <Card>
-          <SectionHeader icon="receipt-long" title="Recent transactions" subtitle="Newest first, all currencies" onViewAll={open('transactions')} />
+          <SectionHeader icon="receipt-long" title="Recent transactions" subtitle={`Newest first, in the currency paid with the ${cur} equivalent`} onViewAll={open('transactions')} />
           {data.recentTransactions.length === 0 ? <Text style={styles.meta}>No transactions this period.</Text> : null}
           {data.recentTransactions.map((t: Data) => (
             <TransactionRow key={t.transactionId} item={t} />
@@ -510,7 +580,7 @@ function TransactionRow({ item }: { item: Data }) {
         <Text numberOfLines={1} style={styles.meta}>Ref {item.reference || item.transactionId}</Text>
       </View>
       <View style={styles.right}>
-        <Text style={[styles.rowTitle, { color: incoming ? colors.success : colors.textDarker }]}>{formatMoney(item.amount, item.currency)}</Text>
+        <Amount value={item.amount} currency={item.currency} item={item} style={{ color: incoming ? colors.success : colors.textDarker }} />
         <Pill label={String(item.status).toUpperCase()} color={tone} />
       </View>
     </View>
@@ -539,7 +609,7 @@ function OrderRow({ item }: { item: Data }) {
         </Text>
       </View>
       <View style={styles.right}>
-        <Text style={styles.rowTitle}>{formatMoney(item.amountPaid, item.currency)}</Text>
+        <Amount value={item.amountPaid} currency={item.currency} item={item} />
         <Pill label={formatLabel(item.status).toUpperCase()} color={tone} />
         {item.refundAmount ? <Text style={styles.meta}>Refunded {formatMoney(item.refundAmount, item.currency)}</Text> : null}
       </View>
@@ -595,7 +665,7 @@ function SectionRow({ section, item, onEdit }: { section: FinanceSectionId; item
             </Text>
           </View>
           <View style={styles.right}>
-            <Text style={styles.rowTitle}>{formatMoney(item.amount, item.currency)}</Text>
+            <Amount value={item.amount} currency={item.currency} item={item} />
             <Pill label={formatLabel(item.status).toUpperCase()} color={item.status === 'refund_failed' || item.status === 'flagged' ? colors.criticalSeverity : colors.pendingDelivery} />
           </View>
         </View>
@@ -726,6 +796,7 @@ export function FinanceSection({
   const [year, setYear] = useState(initialYear ?? new Date().getFullYear());
   const [period, setPeriod] = useState<FinancePeriod>(initialPeriod ?? Math.floor(new Date().getMonth() / 4) + 1);
   const [status, setStatus] = useState(initialStatus ?? 'all');
+  const [currency, setCurrency] = useDisplayCurrency();
   const [query, setQuery] = useState('');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
@@ -736,14 +807,14 @@ export function FinanceSection({
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setResult(await getFinanceSection(section, { year, period, status, q: search, page }));
+      setResult(await getFinanceSection(section, { year, period, status, q: search, page, currency }));
     } catch (reason) {
       toast('error', errorMessage(reason), 'Fetch Error');
       setResult(previous => previous ?? { items: [], total: 0, page: 1, totalPages: 1 });
     } finally {
       setLoading(false);
     }
-  }, [page, period, search, section, status, toast, year]);
+  }, [currency, page, period, search, section, status, toast, year]);
 
   useEffect(() => {
     void load();
@@ -770,22 +841,29 @@ export function FinanceSection({
               title={`Export ${meta.title.toLowerCase()}`}
               scopeNote={`${result?.period?.label ?? 'As of today'}${status !== 'all' ? ` · ${formatLabel(status)}` : ''}`}
               options={[option]}
-              onExport={sections => exportFinanceData({ sections, year, period, status })}
+              onExport={sections => exportFinanceData({ sections, year, period, status, currency })}
             />
           ) : undefined
         }
       />
       <ScrollPage contentContainerStyle={styles.sectionContent}>
-        {meta.dated ? (
+        {meta.dated || MONEY_SECTIONS.has(section) ? (
           <PeriodBar
             year={year}
             period={period}
+            showPeriod={meta.dated}
             onChange={(y, p) => {
               setYear(y);
               setPeriod(p);
               setPage(1);
             }}
+            {...(MONEY_SECTIONS.has(section) ? { currency, currencies: DISPLAY_CURRENCIES, onCurrency: setCurrency } : {})}
           />
+        ) : null}
+        {MONEY_SECTIONS.has(section) && result?.conversion ? (
+          <Text style={[styles.meta, styles.periodNote]}>
+            Original amounts, with the {currency} equivalent{conversionNote(result.conversion)}
+          </Text>
         ) : null}
         {meta.filters ? (
           <FilterChips

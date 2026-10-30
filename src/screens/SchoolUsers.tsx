@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { exportSchoolData, getSchoolUsers, SchoolUsersResult } from '../api';
+import { exportSchoolData, getSchoolUsers, LIST_PAGE_SIZE, SchoolUsersResult } from '../api';
 import { BarChart, StackedBarChart } from '../charts';
 import { Cell, ExportButton, Grid, StatCard, StatRow } from '../dashboard';
 import { errorMessage, isSchoolAdminA, useSession, useToast } from '../context';
@@ -14,6 +14,7 @@ import {
   FilterChips,
   formatCount,
   fromNow,
+  IconButton,
   Loading,
   Pill,
   ScrollPage,
@@ -201,12 +202,20 @@ export function SchoolUsers() {
           </View>
         )}
         {data.totalPages > 1 ? (
+          // The server sends one batch of LIST_PAGE_SIZE at a time, never the whole school.
           <View style={styles.pager}>
+            <IconButton filled icon="first-page" label="First page" onPress={() => setPage(1)} disabled={page <= 1 || loading} />
             <Button compact variant="outline" icon="chevron-left" title="Previous" disabled={page <= 1 || loading} onPress={() => setPage(page - 1)} />
-            <Text style={styles.meta}>
-              Page {data.page} of {data.totalPages}
-            </Text>
+            <View style={styles.pagerText}>
+              <Text style={styles.name}>
+                {formatCount((data.page - 1) * LIST_PAGE_SIZE + 1)}–{formatCount(Math.min(data.total, data.page * LIST_PAGE_SIZE))} of {formatCount(data.total)}
+              </Text>
+              <Text style={styles.meta}>
+                Page {data.page} of {data.totalPages}
+              </Text>
+            </View>
             <Button compact variant="outline" icon="chevron-right" title="Next" disabled={page >= data.totalPages || loading} onPress={() => setPage(page + 1)} />
+            <IconButton filled icon="last-page" label="Last page" onPress={() => setPage(data.totalPages)} disabled={page >= data.totalPages || loading} />
           </View>
         ) : null}
       </Card>
@@ -224,6 +233,7 @@ const useStyles = makeStyles(c =>
     row: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: c.borderSubtle },
     nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
     name: { flexShrink: 1, fontSize: 14, fontWeight: '700', color: c.textDarker },
-    pager: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 16, marginTop: 16 },
+    pager: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', gap: 10, marginTop: 16 },
+    pagerText: { alignItems: 'center', minWidth: 130, paddingHorizontal: 6 },
   }),
 );
