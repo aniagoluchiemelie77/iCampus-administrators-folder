@@ -7,7 +7,9 @@
     "userInterfaceStyle": "light",
     "web": {
       "bundler": "metro",
-      "name": "iCampus Admin"
-    }
+      "name": "iCampus Admin",
+      "favicon": "./assets/favicon.png"
+    },
+    "icon": "./assets/favicon.png"
   }
 }

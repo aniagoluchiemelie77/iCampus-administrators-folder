@@ -13,11 +13,11 @@ type SearchTab = 'people' | 'posts' | 'market' | 'resources' | 'courses';
 type Result = Record<string, any>;
 
 const TABS: ReadonlyArray<{ id: SearchTab; label: string; icon: IconName }> = [
-  { id: 'people', label: 'People', icon: 'people-outline' },
-  { id: 'posts', label: 'Posts', icon: 'dynamic-feed' },
-  { id: 'market', label: 'iCash Store', icon: 'storefront' },
-  { id: 'resources', label: 'Resources', icon: 'menu-book' },
-  { id: 'courses', label: 'Courses', icon: 'class' },
+  { id: "people", label: "People", icon: "people-outline" },
+  { id: "posts", label: "Posts", icon: "dynamic-feed" },
+  { id: "market", label: "Store", icon: "storefront" },
+  { id: "resources", label: "Resources", icon: "menu-book" },
+  { id: "courses", label: "Courses", icon: "class" },
 ];
 
 function PersonRow({ item, onPress }: { item: Result; onPress: () => void }) {
