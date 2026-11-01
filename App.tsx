@@ -26,7 +26,7 @@ import { SocialOverview } from './src/screens/Social';
 import { StaffNotifications } from './src/screens/StaffNotifications';
 import { AdminForm } from './src/screens/Admins';
 import { Login } from './src/screens/Login';
-import { AdForm, AdsList, InstitutionForm, InstitutionsList, StationForm, StationsList, TaxEntries } from './src/screens/Manage';
+import { AdForm, AdsList, InstitutionDetail, InstitutionForm, InstitutionsList, StationForm, StationsList, TaxEntries } from './src/screens/Manage';
 import { Overview } from './src/screens/Overview';
 import { SchoolSection } from './src/screens/SchoolSection';
 import { SchoolNotifications } from './src/screens/SchoolNotifications';
@@ -103,6 +103,8 @@ function RouteContent({ route }: { route: Route }) {
       return <AdminForm admin={route.admin} />;
     case 'institutionForm':
       return <InstitutionForm item={route.item} />;
+    case 'institutionDetail':
+      return <InstitutionDetail id={route.id} />;
     case 'stationForm':
       return <StationForm item={route.item} />;
     case 'adForm':

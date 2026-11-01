@@ -247,6 +247,7 @@ function LiveSection({ live, onViewAll }: { live: Metrics; onViewAll: () => void
 
 /** What a school rep can export, by plan. */
 export const schoolExportOptions = (access?: { professional?: boolean; enterprise?: boolean }): ExportOption[] => [
+  { value: 'all', label: 'All sections' },
   { value: 'overview', label: 'Institution summary', hint: 'Headline figures and lectures by month' },
   { value: 'courses', label: 'Courses this session' },
   { value: 'lectures', label: 'Lectures this session', hint: 'Every lecture with type, host and check-ins' },
@@ -373,7 +374,8 @@ export function SchoolAnalyticsView({
           title="Export institution data"
           scopeNote={`${sessionLabel} session · ${scopeLabel}`}
           options={schoolExportOptions(metrics.access)}
-          onExport={([section]) => exportSchoolData({ section, department, session: sessionLabel })}
+          multiple
+          onExport={sections => Promise.all(sections.map(section => exportSchoolData({ section, department, session: sessionLabel }))).then(results => results[0])}
         />
         ) : null}
       </View>

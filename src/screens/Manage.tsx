@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, FlatList, Image, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, FlatList, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { AdCard, AdItem, displayDomain } from '../AdBanner';
 import {
   deleteAd,
@@ -7,6 +7,7 @@ import {
   deleteStation,
   getAds,
   getInstitutions,
+  getSchoolDetails,
   getStations,
   getTaxEntries,
   LIST_PAGE_SIZE,
@@ -21,10 +22,13 @@ import { Icon } from '../icons';
 import { makeStyles, useColors } from '../theme';
 import {
   Button,
+  Card,
   ConfirmModal,
   EmptyState,
   Field,
   formatDate,
+  formatLabel,
+  formatMoney,
   IconButton,
   Loading,
   OptionPicker,
@@ -179,7 +183,7 @@ export function InstitutionsList() {
         emptyIcon="account-balance"
         emptyTitle="No authorized institutions yet"
         renderItem={item => (
-          <View style={styles.itemCard}>
+          <Pressable style={styles.itemCard} onPress={() => push({ name: 'institutionDetail', id: String(item.id || item.schoolCode) })}>
             {item.logo ? <Image source={{ uri: item.logo }} style={styles.logo} /> : <View style={[styles.logo, styles.logoPlaceholder]} />}
             <View style={styles.flex}>
               <Text style={styles.name}>{item.schoolName || item.name}</Text>
@@ -195,7 +199,7 @@ export function InstitutionsList() {
                 onDelete={() => deletion.setTarget(item)}
               />
             ) : null}
-          </View>
+          </Pressable>
         )}
       />
       <ConfirmModal
@@ -208,6 +212,57 @@ export function InstitutionsList() {
         loading={deletion.deleting}
       />
     </>
+  );
+}
+
+export function InstitutionDetail({ id }: { id: string }) {
+  const styles = useStyles();
+  const colors = useColors();
+  const { pop } = useNavigation();
+  const [data, setData] = useState<Record<string, any> | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    getSchoolDetails(id)
+      .then((result) => setData(result.data && !Array.isArray(result.data) ? result.data : result))
+      .finally(() => setLoading(false));
+  }, [id]);
+
+  const nameOf = (person: Record<string, any>) => [person.firstname, person.lastname].filter(Boolean).join(' ') || person.email || 'Unnamed representative';
+  return (
+    <ScrollView contentContainerStyle={styles.detailPage}>
+      <PageHeader title={data?.schoolName || 'Institution'} back />
+      {loading ? <Loading /> : !data ? <EmptyState icon="error-outline" title="Institution details unavailable" /> : (
+        <>
+          <Card>
+            <SectionHeader icon="school" title="Institution overview" />
+            <View style={styles.detailGrid}>
+              {[['Students', data.studentCount], ['Lecturers', data.lecturerCount], ['Recorded alumni', data.alumniCount], ['Tier', formatLabel(data.tier || 'basic')], ['Amount paid', formatMoney(data.amountPaid)], ['Due date', formatDate(data.dueDate) || '—'], ['Date joined', formatDate(data.createdAt) || '—']].map(([label, value]) => (
+                <View key={String(label)} style={styles.detailStat}><Text style={styles.detailLabel}>{label}</Text><Text style={styles.detailValue}>{value}</Text></View>
+              ))}
+            </View>
+          </Card>
+          <Card>
+            <SectionHeader icon="admin-panel-settings" title="A-level representatives" />
+            {(data.reps?.a || []).length ? data.reps.a.map((rep: Record<string, any>) => <Text key={rep.uid} style={styles.detailListRow}>{nameOf(rep)}</Text>) : <Text style={styles.meta}>No A-level representatives.</Text>}
+          </Card>
+          <Card>
+            <SectionHeader icon="group-work" title="B-level representatives" />
+            {(data.reps?.b || []).length ? data.reps.b.map((rep: Record<string, any>) => <Text key={rep.uid} style={styles.detailListRow}>{nameOf(rep)}{rep.department ? ` · ${rep.department}` : ''}</Text>) : <Text style={styles.meta}>No B-level representatives.</Text>}
+          </Card>
+          <Card>
+            <SectionHeader icon="history" title="Recent activity" />
+            {(data.activity || []).length ? data.activity.map((entry: Record<string, any>) => (
+              <View key={entry.id} style={styles.detailListRow}>
+                <Text style={styles.detailActivityTitle}>{entry.actorName || 'Administrator'} · {formatLabel(entry.action || '')}</Text>
+                <Text style={styles.meta}>{formatDate(entry.createdAt, true)}</Text>
+              </View>
+            )) : <Text style={styles.meta}>No recorded activity.</Text>}
+          </Card>
+        </>
+      )}
+      <Button title="Back to institutions" variant="outline" icon="arrow-back" onPress={pop} />
+    </ScrollView>
   );
 }
 
@@ -733,6 +788,13 @@ export function TaxEntries() {
 const useStyles = makeStyles(c =>
   StyleSheet.create({
     flex: { flex: 1, minWidth: 0 },
+    detailPage: { gap: 16, paddingBottom: 120, width: '100%', maxWidth: 900, alignSelf: 'center' },
+    detailGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+    detailStat: { flexGrow: 1, flexBasis: 180, padding: 14, borderRadius: 12, backgroundColor: c.backgroundSecondary },
+    detailLabel: { fontSize: 12, color: c.textMuted },
+    detailValue: { fontSize: 18, fontWeight: '800', color: c.textDarker, marginTop: 4 },
+    detailListRow: { paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: c.borderSubtle },
+    detailActivityTitle: { fontSize: 13, fontWeight: '700', color: c.textDarker },
     list: { paddingBottom: 110 },
     listHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 6 },
     footer: { marginVertical: 16 },
