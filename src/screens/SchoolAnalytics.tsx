@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Animated, Easing, Image, StyleSheet, Text, View } from 'react-native';
-import { exportSchoolData, getAdminMetrics } from '../api';
+import { AtRiskGroup, exportSchoolData, getAdminMetrics } from '../api';
 import { AreaChart, BarChart, Delta, DonutChart, Heatmap, Legend, MeterRow, RingGauge, Sparkline, StackedBarChart } from '../charts';
 import { ExportButton, ExportOption } from '../dashboard';
 import { errorMessage, isSchoolAdmin, isSchoolAdminA, SchoolSectionId, useNavigation, useSession, useToast } from '../context';
@@ -319,16 +319,53 @@ function LectureModesCard({ modes, department, onViewAll }: { modes: Metrics; de
 // The dashboard
 // ---------------------------------------------------------------------------
 
+/** "100" → "100L"; non-numeric levels ("Unknown", "Part II") are shown as stored. */
+export const levelLabel = (level: string | null | undefined) =>
+  !level ? 'All levels' : /^\d+$/.test(level) ? `${level}L` : level.charAt(0).toUpperCase() + level.slice(1);
+
+/** Department, level and both together, for headers and export notes. */
+export const scopeText = (department: string | null, level: string | null) =>
+  [department || 'All departments', level ? levelLabel(level) : null].filter(Boolean).join(' · ');
+
+/** At-risk counts per department or level, as meters scaled to the largest group. */
+function AtRiskBreakdown({ title, groups, label }: { title: string; groups: AtRiskGroup[]; label: (key: string) => string }) {
+  const colors = useColors();
+  const styles = useStyles();
+  if (groups.length === 0) return null;
+  const max = Math.max(...groups.map(g => g.count));
+  return (
+    <>
+      <Text style={styles.subTitle}>{title}</Text>
+      {groups.slice(0, 8).map(g => (
+        <MeterRow
+          key={g.key}
+          label={label(g.key)}
+          value={g.count}
+          max={max}
+          unit=""
+          color={colors.criticalSeverity}
+          sub={`${g.lowAttendance} low attendance · ${g.lowScore} low score`}
+        />
+      ))}
+    </>
+  );
+}
+
 export function SchoolAnalyticsView({
   metrics,
   department,
   onDepartmentChange,
+  level = null,
+  onLevelChange,
   canFilter,
   onSessionChange,
 }: {
   metrics: Metrics;
   department: string | null;
   onDepartmentChange?: (department: string | null) => void;
+  /** Study level in view (null = all). Both A- and B-level reps may narrow by level. */
+  level?: string | null;
+  onLevelChange?: (level: string | null) => void;
   canFilter: boolean;
   /** Omitted where the session can't be changed (e.g. a super admin's preview). */
   onSessionChange?: (session: string) => void;
@@ -340,12 +377,13 @@ export function SchoolAnalyticsView({
   const { basic, professional: pro, enterprise: ent, institution: inst, kpis, live } = metrics;
   const lockedFor = (tier: string) => metrics.locked?.find((item: any) => item.tier === tier);
   const departments: string[] = metrics.scope?.departments ?? [];
-  const scopeLabel = department || 'All departments';
+  const levels: string[] = metrics.scope?.levels ?? [];
+  const scopeLabel = scopeText(department, level);
   const sessionLabel: string = metrics.session?.label ?? '';
   const isCurrent = metrics.session?.isCurrent !== false;
   const sessions: string[] = metrics.sessions ?? [];
   const viewAll = (section: SchoolSectionId, filter?: string) => () =>
-    push({ name: 'schoolSection', section, department, filter, session: sessionLabel });
+    push({ name: 'schoolSection', section, department, level, filter, session: sessionLabel });
   // "This month" only makes sense for the current session.
   const thisMonth = isCurrent ? 'this month' : 'in its last month';
   const lastMonth = isCurrent ? 'last month' : 'the month before';
@@ -375,7 +413,9 @@ export function SchoolAnalyticsView({
           scopeNote={`${sessionLabel} session · ${scopeLabel}`}
           options={schoolExportOptions(metrics.access)}
           multiple
-          onExport={sections => Promise.all(sections.map(section => exportSchoolData({ section, department, session: sessionLabel }))).then(results => results[0])}
+          onExport={sections =>
+            Promise.all(sections.map(section => exportSchoolData({ section, department, level, session: sessionLabel }))).then(results => results[0])
+          }
         />
         ) : null}
       </View>
@@ -408,6 +448,13 @@ export function SchoolAnalyticsView({
           <Icon name="lock-outline" size={15} color={colors.textMuted} />
           <Text style={styles.muted}>Showing the {department} department only.</Text>
         </View>
+      ) : null}
+      {onLevelChange && levels.length > 0 ? (
+        <FilterChips
+          value={level ?? '__all'}
+          onChange={value => onLevelChange(value === '__all' ? null : value)}
+          options={[{ value: '__all', label: 'All levels' }, ...levels.map(key => ({ value: key, label: levelLabel(key) }))]}
+        />
       ) : null}
 
       <View style={styles.kpis}>
@@ -686,6 +733,13 @@ export function SchoolAnalyticsView({
                     </View>
                   </View>
                 ))}
+                {/* An institution rep looking at every department sees where risk concentrates. */}
+                {canFilter && !department && (ent.atRisk.byDepartment?.length ?? 0) > 1 ? (
+                  <AtRiskBreakdown title="At risk by department" groups={ent.atRisk.byDepartment} label={key => key} />
+                ) : null}
+                {!level && (ent.atRisk.byLevel?.length ?? 0) > 1 ? (
+                  <AtRiskBreakdown title="At risk by level" groups={ent.atRisk.byLevel} label={levelLabel} />
+                ) : null}
               </Card>
             </View>
             <View style={styles.gridHalf}>
@@ -811,6 +865,7 @@ export function SchoolOverview({ header }: { header?: React.ReactNode }) {
   const styles = useStyles();
   const canFilter = isSchoolAdminA(admin.adminType);
   const [department, setDepartment] = useState<string | null>(null);
+  const [level, setLevel] = useState<string | null>(null);
   // null = the current session (the server decides which that is).
   const [session, setSession] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<Metrics | null>(null);
@@ -818,11 +873,11 @@ export function SchoolOverview({ header }: { header?: React.ReactNode }) {
   const [failed, setFailed] = useState(false);
 
   const load = useCallback(
-    async (next: string | null, nextSession: string | null) => {
+    async (next: string | null, nextSession: string | null, nextLevel: string | null) => {
       setLoading(true);
       setFailed(false);
       try {
-        const result = await getAdminMetrics(canFilter ? next : null, nextSession);
+        const result = await getAdminMetrics(canFilter ? next : null, nextSession, nextLevel);
         setMetrics(result.schoolMetrics ?? null);
       } catch (reason) {
         setFailed(true);
@@ -835,8 +890,14 @@ export function SchoolOverview({ header }: { header?: React.ReactNode }) {
   );
 
   useEffect(() => {
-    void load(department, session);
-  }, [department, load, session]);
+    void load(department, session, level);
+  }, [department, level, load, session]);
+
+  // Each department has its own levels, so a new department starts at "All levels".
+  const changeDepartment = (next: string | null) => {
+    setDepartment(next);
+    setLevel(null);
+  };
 
   return (
     <ScrollPage contentContainerStyle={styles.page}>
@@ -846,7 +907,9 @@ export function SchoolOverview({ header }: { header?: React.ReactNode }) {
           <SchoolAnalyticsView
             metrics={metrics}
             department={canFilter ? department : metrics.scope?.department ?? null}
-            onDepartmentChange={setDepartment}
+            onDepartmentChange={changeDepartment}
+            level={level}
+            onLevelChange={setLevel}
             canFilter={canFilter}
             onSessionChange={setSession}
           />
@@ -860,7 +923,7 @@ export function SchoolOverview({ header }: { header?: React.ReactNode }) {
           subtitle={failed ? 'Check your connection, then try again.' : 'No analytics were returned for your account.'}
           buttonText="Try again"
           buttonIcon="refresh"
-          onPress={() => void load(department, session)}
+          onPress={() => void load(department, session, level)}
         />
       )}
       {metrics && loading ? <Text style={styles.updating}>Updating…</Text> : null}

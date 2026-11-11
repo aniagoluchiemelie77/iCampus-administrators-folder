@@ -110,7 +110,15 @@ function RouteContent({ route }: { route: Route }) {
     case 'adForm':
       return <AdForm item={route.item} />;
     case 'schoolSection':
-      return <SchoolSection section={route.section} department={route.department ?? null} filter={route.filter} session={route.session} />;
+      return (
+        <SchoolSection
+          section={route.section}
+          department={route.department ?? null}
+          level={route.level ?? null}
+          filter={route.filter}
+          session={route.session}
+        />
+      );
     case 'repForm':
       return <RepForm rep={route.rep} canInviteA={route.canInviteA} />;
     case 'auditLog':

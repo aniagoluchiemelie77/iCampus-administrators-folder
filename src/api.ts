@@ -185,10 +185,11 @@ export const loginAdmin = async (identifier: string, password: string) => {
   };
 };
 
-export const getAdminMetrics = (department?: string | null, session?: string | null) => {
+export const getAdminMetrics = (department?: string | null, session?: string | null, level?: string | null) => {
   const params = new URLSearchParams();
   if (department) params.set('department', department);
   if (session) params.set('session', session);
+  if (level) params.set('level', level);
   const query = params.toString();
   return request<Record<string, any>>(`admins/get-overview${query ? `?${query}` : ''}`);
 };
@@ -228,13 +229,36 @@ export type SchoolRepsResult = {
 
 export type Page<T> = { items: T[]; total: number; page: number; totalPages: number };
 
+export type AtRiskSort = 'risk' | 'department' | 'level';
+
+/** At-risk students grouped by department or level. */
+export type AtRiskGroup = {
+  key: string;
+  count: number;
+  lowAttendance: number;
+  lowScore: number;
+  averageAttendancePct: number | null;
+  averageScorePct: number | null;
+};
+
 export const getSchoolSection = (
   section: string,
-  options: { department?: string | null; page?: number; q?: string; filter?: string; session?: string | null } = {},
+  options: {
+    department?: string | null;
+    level?: string | null;
+    page?: number;
+    q?: string;
+    filter?: string;
+    session?: string | null;
+    /** At-risk only: 'risk' (default), 'department' or 'level'. */
+    sort?: AtRiskSort;
+  } = {},
 ) => {
   const params = new URLSearchParams({ page: String(options.page ?? 1), limit: String(LIST_PAGE_SIZE) });
   if (options.department) params.set('department', options.department);
+  if (options.level) params.set('level', options.level);
   if (options.session) params.set('session', options.session);
+  if (options.sort) params.set('sort', options.sort);
   if (options.q) params.set('q', options.q);
   if (options.filter) params.set('filter', options.filter);
   return request<Page<Record<string, any>> & Record<string, any>>(
@@ -592,7 +616,13 @@ export const uploadAttachment = async (file: File) => {
 
 export type ExportResult = { message: string; rows: number; sentTo: string };
 
-export const exportSchoolData = (options: { section: string; department?: string | null; level?: string | null; session?: string | null }) =>
+export const exportSchoolData = (options: {
+  section: string;
+  department?: string | null;
+  level?: string | null;
+  session?: string | null;
+  sort?: AtRiskSort;
+}) =>
   request<ExportResult>('admins/school/exports', { method: 'POST', body: JSON.stringify(options) });
 
 export const exportFinanceData = (options: {

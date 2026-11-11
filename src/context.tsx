@@ -98,7 +98,7 @@ export type Route =
   | { name: 'institutionDetail'; id: string }
   | { name: 'stationForm'; item?: Record<string, any> }
   | { name: 'adForm'; item?: Record<string, any> }
-  | { name: 'schoolSection'; section: SchoolSectionId; department?: string | null; filter?: string; session?: string }
+  | { name: 'schoolSection'; section: SchoolSectionId; department?: string | null; level?: string | null; filter?: string; session?: string }
   | { name: 'repForm'; rep?: SchoolRep; canInviteA?: boolean }
   | { name: 'auditLog' }
   | { name: 'financeSection'; section: FinanceSectionId; status?: string; year?: number; period?: number | 'all' }

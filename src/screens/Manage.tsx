@@ -16,7 +16,7 @@ import {
   saveInstitution,
   saveStation,
 } from '../api';
-import { useMeasuredWidth } from '../charts';
+import { BarChart, MeterRow, useMeasuredWidth } from '../charts';
 import { errorMessage, isSchoolAdminA, useNavigation, useSession, useToast } from '../context';
 import { Icon } from '../icons';
 import { makeStyles, useColors } from '../theme';
@@ -26,9 +26,11 @@ import {
   ConfirmModal,
   EmptyState,
   Field,
+  formatCount,
   formatDate,
   formatLabel,
   formatMoney,
+  fromNow,
   IconButton,
   Loading,
   OptionPicker,
@@ -38,6 +40,7 @@ import {
   SectionHeader,
   Sheet,
   ToggleRow,
+  UserAvatar,
 } from '../ui';
 import { TaxEntryRow } from './Overview';
 
@@ -165,104 +168,315 @@ function ItemActions({ onEdit, onDelete, name }: { onEdit: () => void; onDelete:
 // Institutions
 // ---------------------------------------------------------------------------
 
+const BILLING_STATUS: Record<string, { label: string; tone: 'success' | 'pendingDelivery' | 'criticalSeverity' | 'textMuted' }> = {
+  active: { label: 'PAID UP', tone: 'success' },
+  due_soon: { label: 'DUE SOON', tone: 'pendingDelivery' },
+  overdue: { label: 'OVERDUE', tone: 'criticalSeverity' },
+  not_set: { label: 'NO BILLING', tone: 'textMuted' },
+};
+
+/** Delete an institution behind the confirmation modal; `onDeleted` runs after success. */
+function useInstitutionDeletion(onDeleted: () => void) {
+  return useDeletion(item => deleteInstitution(String(item.id || item.schoolCode)), onDeleted, 'Institution deleted successfully.');
+}
+
+function DeleteInstitutionModal({ deletion }: { deletion: ReturnType<typeof useInstitutionDeletion> }) {
+  const name = deletion.target?.schoolName ?? deletion.target?.name ?? '';
+  return (
+    <ConfirmModal
+      visible={Boolean(deletion.target)}
+      onClose={() => deletion.setTarget(null)}
+      onConfirm={() => void deletion.confirm()}
+      title="Delete Institution?"
+      subtitle={`Are you sure you want to delete "${name}"? Its students, lecturers and representatives lose institutional access. This action cannot be undone.`}
+      confirmText="Delete"
+      loading={deletion.deleting}
+    />
+  );
+}
+
 export function InstitutionsList() {
   const { admin } = useSession();
   const { push } = useNavigation();
+  const colors = useColors();
   const styles = useStyles();
   const list = usePagedList(getInstitutions);
-  const deletion = useDeletion(item => deleteInstitution(String(item.id)), () => void list.refresh(), 'Institution deleted successfully.');
+  const deletion = useInstitutionDeletion(() => void list.refresh());
   const isSuperAdmin = admin.adminType === 'super_admin';
+  const view = (item: Item) => push({ name: 'institutionDetail', id: String(item.id || item.schoolCode) });
 
   return (
     <>
       <PagedList
         title="iCampus Authorized Institutions"
-        addLabel="Add School"
-        onAdd={() => push({ name: 'institutionForm' })}
+        addLabel={isSuperAdmin ? 'Add School' : undefined}
+        onAdd={isSuperAdmin ? () => push({ name: 'institutionForm' }) : undefined}
         list={list}
         emptyIcon="account-balance"
         emptyTitle="No authorized institutions yet"
-        renderItem={item => (
-          <Pressable style={styles.itemCard} onPress={() => push({ name: 'institutionDetail', id: String(item.id || item.schoolCode) })}>
-            {item.logo ? <Image source={{ uri: item.logo }} style={styles.logo} /> : <View style={[styles.logo, styles.logoPlaceholder]} />}
-            <View style={styles.flex}>
-              <Text style={styles.name}>{item.schoolName || item.name}</Text>
-              <View style={styles.sideBySide}>
-                <Text style={styles.meta}>{item.contactEmail}</Text>
-                <Text style={styles.meta}>Joined: {formatDate(item.createdAt) || 'N/A'}</Text>
+        renderItem={item => {
+          const tier = formatLabel(String(item.tier || 'basic'));
+          return (
+            <View style={styles.institutionCard}>
+              <Pressable style={styles.institutionMain} onPress={() => view(item)} accessibilityRole="button" accessibilityLabel={`View ${item.schoolName || 'institution'}`}>
+                {item.logo ? <Image source={{ uri: item.logo }} style={styles.logo} /> : <View style={[styles.logo, styles.logoPlaceholder]} />}
+                <View style={styles.flex}>
+                  <View style={styles.nameRow}>
+                    <Text numberOfLines={1} style={styles.name}>{item.schoolName || item.name}</Text>
+                    <Pill label={tier.toUpperCase()} color={colors.primary} />
+                  </View>
+                  <Text numberOfLines={1} style={styles.meta}>
+                    {item.contactEmail || 'No contact email'} · Joined {formatDate(item.createdAt) || 'N/A'}
+                  </Text>
+                  {item.billing?.nextPaymentDue ? (
+                    <Text style={styles.meta}>Plan renews {formatDate(item.billing.nextPaymentDue)}</Text>
+                  ) : null}
+                </View>
+              </Pressable>
+              <View style={styles.institutionActions}>
+                <Button compact variant="soft" icon="visibility" title="View" onPress={() => view(item)} />
+                {isSuperAdmin ? (
+                  <>
+                    <Button compact variant="outline" icon="edit" title="Edit" onPress={() => push({ name: 'institutionForm', item })} />
+                    <IconButton
+                      filled
+                      size={19}
+                      icon="delete-outline"
+                      color={colors.criticalSeverity}
+                      label={`Delete ${item.schoolName || 'institution'}`}
+                      onPress={() => deletion.setTarget(item)}
+                    />
+                  </>
+                ) : null}
               </View>
             </View>
-            {isSuperAdmin ? (
-              <ItemActions
-                name={item.schoolName || 'institution'}
-                onEdit={() => push({ name: 'institutionForm', item })}
-                onDelete={() => deletion.setTarget(item)}
-              />
-            ) : null}
-          </Pressable>
-        )}
+          );
+        }}
       />
-      <ConfirmModal
-        visible={Boolean(deletion.target)}
-        onClose={() => deletion.setTarget(null)}
-        onConfirm={() => void deletion.confirm()}
-        title="Delete Institution?"
-        subtitle={`Are you sure you want to delete the institution "${deletion.target?.schoolName ?? deletion.target?.name ?? ''}"? This action cannot be undone.`}
-        confirmText="Delete"
-        loading={deletion.deleting}
-      />
+      <DeleteInstitutionModal deletion={deletion} />
     </>
+  );
+}
+
+const fullName = (person: Record<string, any>) =>
+  [person.firstname, person.lastname].filter(Boolean).join(' ') || person.email || 'Unnamed representative';
+const seatText = (seat?: { used: number; limit: number | null }) =>
+  seat ? `${seat.used} of ${seat.limit ?? 'unlimited'}` : '—';
+const levelText = (level: string) => (/^\d+$/.test(level) ? `${level}L` : level);
+
+function RepRow({ rep, nested = false }: { rep: Record<string, any>; nested?: boolean }) {
+  const styles = useStyles();
+  return (
+    <View style={[styles.repRow, nested && styles.repNested]}>
+      <UserAvatar profilePic={rep.profilePic} firstName={rep.firstname} lastName={rep.lastname} size={nested ? 32 : 40} />
+      <View style={styles.flex}>
+        <Text numberOfLines={1} style={styles.repName}>{fullName(rep)}</Text>
+        <Text numberOfLines={1} style={styles.meta}>
+          {rep.email}
+          {nested ? ` · ${rep.department || 'No department'}` : ''}
+        </Text>
+      </View>
+      <Text style={styles.meta}>{rep.lastAccessed ? `Seen ${fromNow(rep.lastAccessed)}` : 'Never signed in'}</Text>
+    </View>
+  );
+}
+
+function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  const styles = useStyles();
+  return (
+    <View style={styles.detailStat}>
+      <Text style={styles.detailLabel}>{label}</Text>
+      <Text style={styles.detailValue}>{value}</Text>
+      {sub ? <Text style={styles.meta}>{sub}</Text> : null}
+    </View>
+  );
+}
+
+function InfoRow({ label, value }: { label: string; value: string }) {
+  const styles = useStyles();
+  return (
+    <View style={styles.infoRow}>
+      <Text style={styles.detailLabel}>{label}</Text>
+      <Text style={styles.infoValue}>{value}</Text>
+    </View>
   );
 }
 
 export function InstitutionDetail({ id }: { id: string }) {
   const styles = useStyles();
   const colors = useColors();
-  const { pop } = useNavigation();
+  const toast = useToast();
+  const { admin } = useSession();
+  const { push, pop } = useNavigation();
   const [data, setData] = useState<Record<string, any> | null>(null);
   const [loading, setLoading] = useState(true);
+  const deletion = useInstitutionDeletion(pop);
+  const isSuperAdmin = admin.adminType === 'super_admin';
 
-  useEffect(() => {
+  const load = useCallback(() => {
+    setLoading(true);
     getSchoolDetails(id)
-      .then((result) => setData(result.data && !Array.isArray(result.data) ? result.data : result))
+      .then(result => setData(result.data && !Array.isArray(result.data) ? result.data : result))
+      .catch(reason => toast('error', errorMessage(reason), 'Fetch Error'))
       .finally(() => setLoading(false));
-  }, [id]);
+  }, [id, toast]);
+  useEffect(load, [load]);
 
-  const nameOf = (person: Record<string, any>) => [person.firstname, person.lastname].filter(Boolean).join(' ') || person.email || 'Unnamed representative';
+  if (loading && !data) return <Loading label="Loading institution..." />;
+  if (!data) {
+    return (
+      <View style={styles.flex}>
+        <PageHeader title="Institution" />
+        <EmptyState icon="error-outline" title="Institution details unavailable" buttonText="Try again" buttonIcon="refresh" onPress={load} />
+      </View>
+    );
+  }
+
+  const billing = data.billing || {};
+  const status = BILLING_STATUS[billing.status] ?? BILLING_STATUS.not_set;
+  const students = data.students || {};
+  const lecturers = data.lecturers || {};
+  const repsA: Item[] = data.reps?.a ?? [];
+  const unassignedB: Item[] = data.reps?.unassignedB ?? [];
+  const byDepartment: Item[] = data.byDepartment ?? [];
+  const byLevel: Item[] = data.byLevel ?? [];
+  const editItem = { ...data, id: data.id || id };
+  const daysLeft =
+    billing.daysLeft == null ? '' : billing.daysLeft < 0 ? ` · ${Math.abs(billing.daysLeft)} days overdue` : ` · ${billing.daysLeft} days left`;
+
   return (
-    <ScrollView contentContainerStyle={styles.detailPage}>
-      <PageHeader title={data?.schoolName || 'Institution'} back />
-      {loading ? <Loading /> : !data ? <EmptyState icon="error-outline" title="Institution details unavailable" /> : (
-        <>
-          <Card>
-            <SectionHeader icon="school" title="Institution overview" />
-            <View style={styles.detailGrid}>
-              {[['Students', data.studentCount], ['Lecturers', data.lecturerCount], ['Recorded alumni', data.alumniCount], ['Tier', formatLabel(data.tier || 'basic')], ['Amount paid', formatMoney(data.amountPaid)], ['Due date', formatDate(data.dueDate) || '—'], ['Date joined', formatDate(data.createdAt) || '—']].map(([label, value]) => (
-                <View key={String(label)} style={styles.detailStat}><Text style={styles.detailLabel}>{label}</Text><Text style={styles.detailValue}>{value}</Text></View>
+    <View style={styles.flex}>
+      <PageHeader
+        title={data.schoolName || 'Institution'}
+        subtitle={`${data.schoolCode || id} · ${data.tierLabel || formatLabel(data.tier || 'basic')} plan`}
+        right={
+          isSuperAdmin ? (
+            <View style={styles.headerActions}>
+              <IconButton filled size={19} icon="edit" label="Edit institution" onPress={() => push({ name: 'institutionForm', item: editItem })} />
+              <IconButton filled size={19} icon="delete-outline" color={colors.criticalSeverity} label="Delete institution" onPress={() => deletion.setTarget(editItem)} />
+            </View>
+          ) : undefined
+        }
+      />
+      <ScrollPage contentContainerStyle={styles.detailPage}>
+        <View style={styles.detailHero}>
+          {data.logo ? <Image source={{ uri: data.logo }} style={styles.heroLogo} /> : <View style={[styles.heroLogo, styles.logoPlaceholder]} />}
+          <View style={styles.flex}>
+            <Text style={styles.heroName}>{data.schoolName}</Text>
+            <Text style={styles.meta}>{data.contactEmail || 'No contact email'}</Text>
+            <View style={styles.pillRow}>
+              <Pill label={(data.tierLabel || 'Basic').toUpperCase()} icon="workspace-premium" color={colors.primary} />
+              <Pill label={data.isOperational ? 'OPERATIONAL' : 'NOT OPERATIONAL'} icon={data.isOperational ? 'check-circle' : 'pause-circle'} color={data.isOperational ? colors.success : colors.textMuted} />
+              <Pill label={status.label} icon="receipt-long" color={colors[status.tone]} />
+            </View>
+          </View>
+          <IconButton filled size={19} icon="refresh" label="Refresh" onPress={load} />
+        </View>
+
+        <Card>
+          <SectionHeader icon="groups" title="People" subtitle="Active = verified, not suspended and (students) not graduated" />
+          <View style={styles.detailGrid}>
+            <Stat label="Active students" value={formatCount(students.active ?? 0)} sub={`${formatCount(students.total ?? 0)} enrolled`} />
+            <Stat label="Active lecturers" value={formatCount(lecturers.active ?? 0)} sub={`${formatCount(lecturers.total ?? 0)} enrolled`} />
+            <Stat label="Unverified accounts" value={formatCount((students.unverified ?? 0) + (lecturers.unverified ?? 0))} />
+            <Stat label="Suspended accounts" value={formatCount((students.suspended ?? 0) + (lecturers.suspended ?? 0))} />
+            <Stat label="Alumni" value={formatCount(students.alumni ?? 0)} />
+            <Stat label="Joined in last 30 days" value={formatCount(data.joinedLast30Days ?? 0)} />
+            <Stat label="Courses this session" value={formatCount(data.courses?.thisSession ?? 0)} sub={data.courses?.session ? `${data.courses.session} · ${formatCount(data.courses.total)} all-time` : undefined} />
+            <Stat label="Departments" value={formatCount(byDepartment.length)} />
+          </View>
+        </Card>
+
+        <View style={styles.detailColumns}>
+          <Card style={styles.detailColumn}>
+            <SectionHeader icon="receipt-long" title="Plan & billing" />
+            <InfoRow label="Tier" value={`${data.tierLabel || formatLabel(data.tier || 'basic')}${data.tierUpdatedAt ? ` · since ${formatDate(data.tierUpdatedAt)}` : ''}`} />
+            <InfoRow label="Subscription fee" value={billing.amount ? `${formatMoney(billing.amount, billing.currency)}${billing.cycle ? ` / ${billing.cycle}` : ''}` : 'Not set'} />
+            <InfoRow label="Payment expires" value={billing.nextPaymentDue ? `${formatDate(billing.nextPaymentDue)}${daysLeft}` : 'Not set'} />
+            <InfoRow label="Last payment" value={formatDate(billing.lastPaidAt) || '—'} />
+            {billing.note ? <InfoRow label="Billing note" value={billing.note} /> : null}
+            <Text style={[styles.subTitle, styles.gapTop]}>Representative seats</Text>
+            <MeterRow label="Institution reps (A)" value={data.seats?.a?.used ?? 0} max={data.seats?.a?.limit ?? Math.max(1, data.seats?.a?.used ?? 1)} unit={` · ${seatText(data.seats?.a)}`} color={colors.pendingDelivery} />
+            <MeterRow label="Department reps (B)" value={data.seats?.b?.used ?? 0} max={data.seats?.b?.limit ?? Math.max(1, data.seats?.b?.used ?? 1)} unit={` · ${seatText(data.seats?.b)}`} color={colors.info} />
+          </Card>
+          <Card style={styles.detailColumn}>
+            <SectionHeader icon="settings" title="Configuration" />
+            <InfoRow label="School code" value={data.schoolCode || id} />
+            <InfoRow label="Country" value={data.countryCode || '—'} />
+            <InfoRow label="Verification" value={data.verificationMethod ? formatLabel(String(data.verificationMethod)) : '—'} />
+            <InfoRow label="Email domains" value={(data.domainWhitelist || []).join(', ') || 'None'} />
+            <InfoRow label="Date joined" value={formatDate(data.createdAt) || '—'} />
+            <InfoRow label="Last updated" value={formatDate(data.updatedAt, true) || '—'} />
+          </Card>
+        </View>
+
+        <Card>
+          <SectionHeader icon="admin-panel-settings" title="Representatives" subtitle={`${repsA.length} institution · ${data.reps?.b?.length ?? 0} department`} />
+          {repsA.length === 0 ? <Text style={styles.meta}>No institution representative yet.</Text> : null}
+          {repsA.map(rep => (
+            <View key={rep.uid} style={styles.repGroup}>
+              <RepRow rep={rep} />
+              <Text style={styles.repCaption}>
+                {rep.departmentReps?.length ? `Department reps added (${rep.departmentReps.length})` : 'No department reps added yet'}
+              </Text>
+              {(rep.departmentReps ?? []).map((b: Item) => (
+                <RepRow key={b.uid} rep={b} nested />
               ))}
             </View>
-          </Card>
-          <Card>
-            <SectionHeader icon="admin-panel-settings" title="A-level representatives" />
-            {(data.reps?.a || []).length ? data.reps.a.map((rep: Record<string, any>) => <Text key={rep.uid} style={styles.detailListRow}>{nameOf(rep)}</Text>) : <Text style={styles.meta}>No A-level representatives.</Text>}
-          </Card>
-          <Card>
-            <SectionHeader icon="group-work" title="B-level representatives" />
-            {(data.reps?.b || []).length ? data.reps.b.map((rep: Record<string, any>) => <Text key={rep.uid} style={styles.detailListRow}>{nameOf(rep)}{rep.department ? ` · ${rep.department}` : ''}</Text>) : <Text style={styles.meta}>No B-level representatives.</Text>}
-          </Card>
-          <Card>
-            <SectionHeader icon="history" title="Recent activity" />
-            {(data.activity || []).length ? data.activity.map((entry: Record<string, any>) => (
+          ))}
+          {unassignedB.length > 0 ? (
+            <View style={styles.repGroup}>
+              <Text style={styles.repCaption}>Department reps added by iCampus staff ({unassignedB.length})</Text>
+              {unassignedB.map(b => (
+                <RepRow key={b.uid} rep={b} nested />
+              ))}
+            </View>
+          ) : null}
+        </Card>
+
+        {byDepartment.length > 0 ? (
+          <View style={styles.detailColumns}>
+            <Card style={styles.detailColumn}>
+              <SectionHeader icon="account-tree" title="By department" subtitle="Students (active) and lecturers" />
+              {byDepartment.map(d => (
+                <MeterRow
+                  key={d.department}
+                  label={d.department}
+                  value={d.students}
+                  max={byDepartment[0].students || 1}
+                  unit=" students"
+                  color={colors.series1}
+                  sub={`${formatCount(d.activeStudents)} active · ${formatCount(d.lecturers)} lecturers`}
+                />
+              ))}
+            </Card>
+            {byLevel.length > 0 ? (
+              <Card style={styles.detailColumn}>
+                <SectionHeader icon="stairs" title="Students by level" subtitle="Current students (alumni excluded)" />
+                <BarChart color={colors.series3} data={byLevel.map(l => ({ label: levelText(l.level), value: l.students }))} />
+              </Card>
+            ) : null}
+          </View>
+        ) : null}
+
+        <Card>
+          <SectionHeader icon="history" title="Recent activity" subtitle="Last 25 actions by this school's representatives" />
+          {(data.activity || []).length ? (
+            data.activity.map((entry: Item) => (
               <View key={entry.id} style={styles.detailListRow}>
-                <Text style={styles.detailActivityTitle}>{entry.actorName || 'Administrator'} · {formatLabel(entry.action || '')}</Text>
+                <Text style={styles.detailActivityTitle}>
+                  {entry.actorName || 'Administrator'} · {formatLabel(entry.action || '')}
+                </Text>
                 <Text style={styles.meta}>{formatDate(entry.createdAt, true)}</Text>
               </View>
-            )) : <Text style={styles.meta}>No recorded activity.</Text>}
-          </Card>
-        </>
-      )}
-      <Button title="Back to institutions" variant="outline" icon="arrow-back" onPress={pop} />
-    </ScrollView>
+            ))
+          ) : (
+            <Text style={styles.meta}>No recorded activity.</Text>
+          )}
+        </Card>
+      </ScrollPage>
+      <DeleteInstitutionModal deletion={deletion} />
+    </View>
   );
 }
 
@@ -306,20 +520,40 @@ const emptyInstitution = {
   externalApiConfig: { endpoint: '', sharedSecret: '', timeoutMs: 5000 },
 };
 
-// Institutions arrive from the list keyed as stored (`schoolName`, no config
-// fields); map them onto the form so editing doesn't start from blanks.
+/** Drops null/undefined so stored partial configs don't blank the form defaults. */
+const defined = (value?: Record<string, any> | null) =>
+  Object.fromEntries(Object.entries(value || {}).filter(([, v]) => v !== undefined && v !== null));
+
+// Institutions arrive keyed as stored (`schoolName`); the details endpoint adds
+// the config fields. Map both onto the form so editing doesn't start from blanks.
 const toInstitutionForm = (item?: Item): typeof emptyInstitution =>
   item
     ? {
         ...emptyInstitution,
-        ...item,
+        id: String(item.id || item.schoolCode || ''),
         name: item.name || item.schoolName || '',
+        contactEmail: item.contactEmail || '',
+        countryCode: item.countryCode || emptyInstitution.countryCode,
+        logo: item.logo || '',
+        isOperational: item.isOperational === true,
+        verificationMethod: (item.verificationMethod || emptyInstitution.verificationMethod) as VerificationMethod,
         domainWhitelist: Array.isArray(item.domainWhitelist) ? item.domainWhitelist : [],
-        tier: (({ free: 'basic', premium: 'enterprise' } as Record<string, Tier>)[item.tier] ?? (['basic', 'pro', 'enterprise'].includes(item.tier) ? item.tier : 'basic')) as Tier,
-        ssoConfig: { ...emptyInstitution.ssoConfig, ...(item.ssoConfig || {}) },
-        externalApiConfig: { ...emptyInstitution.externalApiConfig, ...(item.externalApiConfig || {}) },
+        tier: (({ free: 'basic', professional: 'pro', premium: 'enterprise' } as Record<string, Tier>)[item.tier] ?? (['basic', 'pro', 'enterprise'].includes(item.tier) ? item.tier : 'basic')) as Tier,
+        ssoConfig: { ...emptyInstitution.ssoConfig, ...defined(item.ssoConfig) },
+        externalApiConfig: { ...emptyInstitution.externalApiConfig, ...defined(item.externalApiConfig) },
       }
     : emptyInstitution;
+
+/** Secrets are never sent back by the server, so a blank one means "keep the stored value". */
+const withoutBlankSecrets = (form: typeof emptyInstitution) => {
+  const { clientSecret, ...sso } = form.ssoConfig;
+  const { sharedSecret, ...api } = form.externalApiConfig;
+  return {
+    ...form,
+    ssoConfig: clientSecret ? { ...sso, clientSecret } : sso,
+    externalApiConfig: sharedSecret ? { ...api, sharedSecret } : api,
+  };
+};
 
 /** Shared save flow for the create/edit forms: no-change guard, toast, go back. */
 const useSaveForm = <T,>(original: T, editing: boolean, save: (form: T) => Promise<unknown>) => {
@@ -345,13 +579,39 @@ const useSaveForm = <T,>(original: T, editing: boolean, save: (form: T) => Promi
   return { saving, submit };
 };
 
+/**
+ * Create or edit an institution. Editing first loads the full details, since
+ * list rows don't carry the verification settings, operational flag or
+ * domains, and saving blanks over them would switch a live school off.
+ */
 export function InstitutionForm({ item }: { item?: Item }) {
+  const toast = useToast();
+  const { pop } = useNavigation();
+  const id = item ? String(item.id || item.schoolCode || '') : '';
+  const hasConfig = Boolean(item && 'isOperational' in item && 'verificationMethod' in item);
+  const [loaded, setLoaded] = useState<Item | null>(!item || hasConfig ? item ?? null : null);
+
+  useEffect(() => {
+    if (!item || hasConfig) return;
+    getSchoolDetails(id)
+      .then(details => setLoaded({ ...item, ...details, id }))
+      .catch(reason => {
+        toast('error', errorMessage(reason, "Couldn't load this institution's settings."), 'Fetch Error');
+        pop();
+      });
+  }, [hasConfig, id, item, pop, toast]);
+
+  if (item && !loaded) return <Loading label="Loading institution settings..." />;
+  return <InstitutionFormBody item={loaded ?? undefined} />;
+}
+
+function InstitutionFormBody({ item }: { item?: Item }) {
   const styles = useStyles();
   const [original] = useState(() => toInstitutionForm(item));
   const [form, setForm] = useState(original);
   const [domains, setDomains] = useState(original.domainWhitelist.join(', '));
   const { saving, submit } = useSaveForm(original, Boolean(item), next =>
-    saveInstitution(next, item ? String(next.id) : undefined),
+    saveInstitution(withoutBlankSecrets(next), item ? String(next.id) : undefined),
   );
   const update = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) => setForm(previous => ({ ...previous, [key]: value }));
 
@@ -400,6 +660,12 @@ export function InstitutionForm({ item }: { item?: Item }) {
             />
             <Field label="Issuer URL" keyboardType="url" value={form.ssoConfig.issuerUrl} onChangeText={value => update('ssoConfig', { ...form.ssoConfig, issuerUrl: value })} />
             <Field label="Client ID" value={form.ssoConfig.clientId} onChangeText={value => update('ssoConfig', { ...form.ssoConfig, clientId: value })} />
+            <Field
+              label={item ? 'Client Secret (leave blank to keep the current one)' : 'Client Secret'}
+              secureTextEntry
+              value={form.ssoConfig.clientSecret}
+              onChangeText={value => update('ssoConfig', { ...form.ssoConfig, clientSecret: value })}
+            />
           </>
         ) : null}
         {form.verificationMethod === 'EXTERNAL_API' ? (
@@ -411,7 +677,7 @@ export function InstitutionForm({ item }: { item?: Item }) {
               onChangeText={value => update('externalApiConfig', { ...form.externalApiConfig, endpoint: value })}
             />
             <Field
-              label="Shared Secret"
+              label={item ? 'Shared Secret (leave blank to keep the current one)' : 'Shared Secret'}
               secureTextEntry
               value={form.externalApiConfig.sharedSecret}
               onChangeText={value => update('externalApiConfig', { ...form.externalApiConfig, sharedSecret: value })}
@@ -788,7 +1054,26 @@ export function TaxEntries() {
 const useStyles = makeStyles(c =>
   StyleSheet.create({
     flex: { flex: 1, minWidth: 0 },
-    detailPage: { gap: 16, paddingBottom: 120, width: '100%', maxWidth: 900, alignSelf: 'center' },
+    detailPage: { gap: 16, paddingBottom: 120, width: '100%', maxWidth: 1000, alignSelf: 'center' },
+    detailHero: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16, borderRadius: 20, borderWidth: 1, borderColor: c.borderSubtle, backgroundColor: c.backgroundSecondary },
+    heroLogo: { width: 64, height: 64, borderRadius: 32 },
+    heroName: { fontSize: 20, fontWeight: '800', color: c.textDarker },
+    pillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
+    detailColumns: { flexDirection: 'row', flexWrap: 'wrap', gap: 16 },
+    detailColumn: { flexGrow: 1, flexBasis: 320, minWidth: 0 },
+    infoRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 12, paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: c.borderSubtle },
+    infoValue: { flexShrink: 1, fontSize: 13, fontWeight: '600', color: c.textDarker, textAlign: 'right' },
+    subTitle: { fontSize: 13, fontWeight: '700', color: c.textDarker, marginBottom: 6 },
+    gapTop: { marginTop: 14 },
+    repGroup: { paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: c.borderSubtle },
+    repRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 6 },
+    repNested: { marginLeft: 26, paddingLeft: 12, borderLeftWidth: 2, borderLeftColor: c.borderSubtle },
+    repName: { fontSize: 14, fontWeight: '700', color: c.textDarker },
+    repCaption: { fontSize: 11.5, fontWeight: '700', letterSpacing: 0.4, textTransform: 'uppercase', color: c.textMuted, marginTop: 6, marginLeft: 26 },
+    institutionCard: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 12, padding: 14, borderRadius: 18, marginBottom: 12, borderWidth: 1, borderColor: c.borderSubtle, backgroundColor: c.backgroundSecondary },
+    institutionMain: { flexDirection: 'row', alignItems: 'center', gap: 14, flexGrow: 1, flexBasis: 280, minWidth: 0 },
+    institutionActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
     detailGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
     detailStat: { flexGrow: 1, flexBasis: 180, padding: 14, borderRadius: 12, backgroundColor: c.backgroundSecondary },
     detailLabel: { fontSize: 12, color: c.textMuted },
