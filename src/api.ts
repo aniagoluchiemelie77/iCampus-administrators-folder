@@ -268,6 +268,66 @@ export const getSchoolSection = (
 
 export const getSchoolReps = () => request<SchoolRepsResult>('admins/school/reps');
 
+// ---------------------------------------------------------------------------
+// Academic calendar. The institution rep (A) sets when sessions start and end;
+// uploads of registration/allocation forms only suggest a new session.
+// Super admins pass `schoolCode` to manage any school's calendar.
+// ---------------------------------------------------------------------------
+
+export type CalendarSession = { label: string; startsAt: string | null; endsAt: string | null; plannedEndsAt?: string | null; setAt?: string | null };
+
+/** Where the session analytics use came from. */
+export type SessionSource = 'admin' | 'detected' | 'legacy' | 'courses' | 'default';
+
+export type CalendarStatus = {
+  isSet: boolean;
+  source: SessionSource;
+  overdue: boolean;
+  suggestion: { label: string; reporters: number; lecturers: number; lastSeenAt: string | null } | null;
+  defaultStartMonth: number;
+};
+
+export type AcademicCalendar = {
+  schoolCode: string;
+  schoolName: string;
+  canManage: boolean;
+  current: CalendarSession | null;
+  history: CalendarSession[];
+  defaultStartMonth: number;
+  inUse: CalendarSession & { source: SessionSource };
+  status: CalendarStatus;
+  detected: Array<{ label: string; reporters: number; lecturers: number; lastSeenAt: string | null; matchesCurrent: boolean; dismissed: boolean }>;
+  thresholds: { reporters: number; lecturers: number };
+  message?: string;
+};
+
+const calendarQuery = (schoolCode?: string) => (schoolCode ? `?${new URLSearchParams({ schoolCode })}` : '');
+const calendarWrite = (path: string, method: string, body: Record<string, unknown>, schoolCode?: string) =>
+  request<AcademicCalendar>(`admins/school/calendar${path}`, {
+    method,
+    headers: { 'X-Idempotency-Key': idempotencyKey() },
+    body: JSON.stringify(schoolCode ? { ...body, schoolCode } : body),
+  });
+
+export const getAcademicCalendar = (schoolCode?: string) =>
+  request<AcademicCalendar>(`admins/school/calendar${calendarQuery(schoolCode)}`);
+
+/** Starts a new session; the current one closes when it starts. Dates are ISO strings. */
+export const startAcademicSession = (session: { label: string; startsAt: string; endsAt?: string | null }, schoolCode?: string) =>
+  calendarWrite('/sessions', 'POST', session, schoolCode);
+
+export const updateAcademicSession = (session: { label?: string; startsAt?: string; endsAt?: string | null }, schoolCode?: string) =>
+  calendarWrite('/current', 'PATCH', session, schoolCode);
+
+/** Removes the current session and makes the previous one current again. */
+export const undoAcademicSession = (schoolCode?: string) => calendarWrite('/current', 'DELETE', {}, schoolCode);
+
+export const updateCalendarSettings = (settings: { defaultStartMonth: number }, schoolCode?: string) =>
+  calendarWrite('/settings', 'PATCH', settings, schoolCode);
+
+export const dismissSessionSuggestion = (label: string, schoolCode?: string) =>
+  calendarWrite('/dismiss-suggestion', 'POST', { label }, schoolCode);
+
 export const inviteSchoolRep = (rep: {
   firstname: string;
   lastname: string;

@@ -100,6 +100,8 @@ export type Route =
   | { name: 'adForm'; item?: Record<string, any> }
   | { name: 'schoolSection'; section: SchoolSectionId; department?: string | null; level?: string | null; filter?: string; session?: string }
   | { name: 'repForm'; rep?: SchoolRep; canInviteA?: boolean }
+  /** `schoolCode` only when a super admin or support opens another school's calendar. */
+  | { name: 'academicCalendar'; schoolCode?: string; prefill?: string }
   | { name: 'auditLog' }
   | { name: 'financeSection'; section: FinanceSectionId; status?: string; year?: number; period?: number | 'all' }
   | { name: 'adminDetail'; uid: string }

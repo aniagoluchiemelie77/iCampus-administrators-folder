@@ -18,6 +18,7 @@ import {
 import { AdminFab } from './src/Fab';
 import { Icon, IconName } from './src/icons';
 import { Logo } from './src/Logo';
+import { AcademicCalendarScreen } from './src/screens/AcademicCalendar';
 import { ActivityLogs } from './src/screens/ActivityLogs';
 import { AdminActivityScreen, AdminDetail, MessageAdmins, StaffAccessControl } from './src/screens/AccessControl';
 import { FinanceOverview, FinanceSection, SchoolBillingTab } from './src/screens/Finance';
@@ -119,6 +120,8 @@ function RouteContent({ route }: { route: Route }) {
           session={route.session}
         />
       );
+    case 'academicCalendar':
+      return <AcademicCalendarScreen schoolCode={route.schoolCode} prefill={route.prefill} />;
     case 'repForm':
       return <RepForm rep={route.rep} canInviteA={route.canInviteA} />;
     case 'auditLog':

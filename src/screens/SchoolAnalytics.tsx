@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Animated, Easing, Image, StyleSheet, Text, View } from 'react-native';
-import { AtRiskGroup, exportSchoolData, getAdminMetrics } from '../api';
+import { AtRiskGroup, CalendarStatus, exportSchoolData, getAdminMetrics } from '../api';
 import { AreaChart, BarChart, Delta, DonutChart, Heatmap, Legend, MeterRow, RingGauge, Sparkline, StackedBarChart } from '../charts';
 import { ExportButton, ExportOption } from '../dashboard';
 import { errorMessage, isSchoolAdmin, isSchoolAdminA, SchoolSectionId, useNavigation, useSession, useToast } from '../context';
@@ -14,6 +14,7 @@ import {
   formatCount,
   formatDate,
   fromNow,
+  IconButton,
   Loading,
   Pill,
   ScrollPage,
@@ -384,6 +385,34 @@ export function SchoolAnalyticsView({
   const sessions: string[] = metrics.sessions ?? [];
   const viewAll = (section: SchoolSectionId, filter?: string) => () =>
     push({ name: 'schoolSection', section, department, level, filter, session: sessionLabel });
+  // Only the institution rep can act on the calendar, so only they are prompted.
+  const calendar: (CalendarStatus & { current?: { label: string } }) | undefined = metrics.calendar;
+  const calendarPrompt: { icon: IconName; color: string; text: string; action: string; prefill?: string } | null =
+    !calendar || !isSchoolAdminA(admin.adminType)
+      ? null
+      : calendar.suggestion
+        ? {
+            icon: 'tips-and-updates',
+            color: colors.info,
+            text: `${calendar.suggestion.reporters} people have uploaded ${calendar.suggestion.label} forms. Has the new session started?`,
+            action: `Start ${calendar.suggestion.label}`,
+            prefill: calendar.suggestion.label,
+          }
+        : !calendar.isSet
+          ? {
+              icon: 'event-busy',
+              color: colors.pendingDelivery,
+              text: `Session dates are estimated. Set your academic calendar so figures match your real ${sessionLabel} session.`,
+              action: 'Set calendar',
+            }
+          : calendar.overdue
+            ? {
+                icon: 'schedule',
+                color: colors.criticalSeverity,
+                text: `${calendar.current?.label ?? sessionLabel} has passed its planned end date. Start the next session or extend it.`,
+                action: 'Review calendar',
+              }
+            : null;
   // "This month" only makes sense for the current session.
   const thisMonth = isCurrent ? 'this month' : 'in its last month';
   const lastMonth = isCurrent ? 'last month' : 'the month before';
@@ -402,11 +431,14 @@ export function SchoolAnalyticsView({
           </Text>
         </View>
         <Pill
-          label={`${sessionLabel} SESSION${isCurrent ? '' : ' · PAST'}`}
+          label={`${sessionLabel} SESSION${isCurrent ? (calendar && !calendar.isSet ? ' · ESTIMATED' : '') : ' · PAST'}`}
           icon={isCurrent ? 'event' : 'history'}
           color={isCurrent ? colors.success : colors.pendingDelivery}
         />
         <PlanBadge label={inst?.tierLabel || 'Basic'} />
+        {isSchoolAdmin(admin.adminType) ? (
+          <IconButton filled size={19} icon="edit-calendar" label="Academic calendar" onPress={() => push({ name: 'academicCalendar' })} />
+        ) : null}
         {isSchoolAdmin(admin.adminType) ? (
         <ExportButton
           title="Export institution data"
@@ -434,6 +466,19 @@ export function SchoolAnalyticsView({
             You are viewing the {sessionLabel} session, which has ended. Figures are as of its last day; live lectures only show for the
             current session.
           </Text>
+        </View>
+      ) : null}
+      {calendarPrompt ? (
+        <View style={[styles.pastNote, { borderLeftColor: calendarPrompt.color, backgroundColor: calendarPrompt.color + '12' }]}>
+          <Icon name={calendarPrompt.icon} size={16} color={calendarPrompt.color} />
+          <Text style={[styles.muted, styles.flex]}>{calendarPrompt.text}</Text>
+          <Button
+            compact
+            variant="soft"
+            icon="edit-calendar"
+            title={calendarPrompt.action}
+            onPress={() => push({ name: 'academicCalendar', prefill: calendarPrompt.prefill })}
+          />
         </View>
       ) : null}
 

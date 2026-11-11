@@ -407,6 +407,27 @@ export function InstitutionDetail({ id }: { id: string }) {
             <InfoRow label="Email domains" value={(data.domainWhitelist || []).join(', ') || 'None'} />
             <InfoRow label="Date joined" value={formatDate(data.createdAt) || '—'} />
             <InfoRow label="Last updated" value={formatDate(data.updatedAt, true) || '—'} />
+            <InfoRow
+              label="Academic session"
+              value={
+                data.academicSession
+                  ? `${data.academicSession.label} · ${data.academicSession.isSet ? `since ${formatDate(data.academicSession.startsAt)}` : 'estimated, not set by the school'}`
+                  : '—'
+              }
+            />
+            {data.academicSession?.suggestion ? (
+              <Text style={[styles.meta, styles.gapTop]}>
+                {data.academicSession.suggestion.reporters} people have uploaded {data.academicSession.suggestion.label} forms.
+              </Text>
+            ) : null}
+            <Button
+              compact
+              variant="soft"
+              icon="edit-calendar"
+              title="Academic calendar"
+              onPress={() => push({ name: 'academicCalendar', schoolCode: String(data.schoolCode || id) })}
+              style={styles.gapTop}
+            />
           </Card>
         </View>
 
