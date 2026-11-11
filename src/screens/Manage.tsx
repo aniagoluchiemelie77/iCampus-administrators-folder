@@ -203,7 +203,7 @@ export function InstitutionsList() {
   const list = usePagedList(getInstitutions);
   const deletion = useInstitutionDeletion(() => void list.refresh());
   const isSuperAdmin = admin.adminType === 'super_admin';
-  const view = (item: Item) => push({ name: 'institutionDetail', id: String(item.id || item.schoolCode) });
+  const view = (item: Item) => push({ name: 'institutionDetail', id: String(item.schoolCode || item.id), recordId: item.id ? String(item.id) : undefined });
 
   return (
     <>
@@ -302,7 +302,7 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function InstitutionDetail({ id }: { id: string }) {
+export function InstitutionDetail({ id, recordId }: { id: string; recordId?: string }) {
   const styles = useStyles();
   const colors = useColors();
   const toast = useToast();
@@ -340,7 +340,7 @@ export function InstitutionDetail({ id }: { id: string }) {
   const unassignedB: Item[] = data.reps?.unassignedB ?? [];
   const byDepartment: Item[] = data.byDepartment ?? [];
   const byLevel: Item[] = data.byLevel ?? [];
-  const editItem = { ...data, id: data.id || id };
+  const editItem = { ...data, id: data.id || recordId || id };
   const daysLeft =
     billing.daysLeft == null ? '' : billing.daysLeft < 0 ? ` · ${Math.abs(billing.daysLeft)} days overdue` : ` · ${billing.daysLeft} days left`;
 
@@ -614,7 +614,7 @@ export function InstitutionForm({ item }: { item?: Item }) {
 
   useEffect(() => {
     if (!item || hasConfig) return;
-    getSchoolDetails(id)
+    getSchoolDetails(String(item.schoolCode || id))
       .then(details => setLoaded({ ...item, ...details, id }))
       .catch(reason => {
         toast('error', errorMessage(reason, "Couldn't load this institution's settings."), 'Fetch Error');

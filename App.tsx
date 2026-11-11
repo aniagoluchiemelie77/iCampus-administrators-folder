@@ -105,7 +105,7 @@ function RouteContent({ route }: { route: Route }) {
     case 'institutionForm':
       return <InstitutionForm item={route.item} />;
     case 'institutionDetail':
-      return <InstitutionDetail id={route.id} />;
+      return <InstitutionDetail id={route.id} recordId={route.recordId} />;
     case 'stationForm':
       return <StationForm item={route.item} />;
     case 'adForm':

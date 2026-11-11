@@ -489,7 +489,7 @@ function StaffOverview({ header }: { header?: React.ReactNode }) {
                 items={stats.recentSchools?.items ?? []}
                 total={stats.recentSchools?.total ?? 0}
                 onViewAll={() => setTab('Institutions')}
-                onItemPress={item => item.id && setSchoolId(String(item.id))}
+                onItemPress={item => (item.schoolCode || item.id) && setSchoolId(String(item.schoolCode || item.id))}
               />
               <EntityPreviewSection
                 title="Drop Off Stations"

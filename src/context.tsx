@@ -95,7 +95,7 @@ export type Route =
   | { name: 'inquiries' }
   | { name: 'adminForm'; admin?: AdminUser }
   | { name: 'institutionForm'; item?: Record<string, any> }
-  | { name: 'institutionDetail'; id: string }
+  | { name: 'institutionDetail'; id: string; recordId?: string }
   | { name: 'stationForm'; item?: Record<string, any> }
   | { name: 'adForm'; item?: Record<string, any> }
   | { name: 'schoolSection'; section: SchoolSectionId; department?: string | null; level?: string | null; filter?: string; session?: string }
