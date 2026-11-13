@@ -511,7 +511,7 @@ const PLAN_INFO: Record<Tier, { label: string; summary: string }> = {
   },
   pro: {
     label: 'Professional (Pro)',
-    summary: '+ Tests & exam proctoring, LMS activity, attendance by department/course, lecturer activity. 1 institution rep + 20 department reps.',
+    summary: '+ Assessments proctoring, LMS activity, attendance by department/course, lecturer activity. 1 institution rep + 20 department reps.',
   },
   enterprise: {
     label: 'Enterprise',

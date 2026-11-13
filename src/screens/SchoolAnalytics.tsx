@@ -847,7 +847,7 @@ export function SchoolAnalyticsView({
           <View style={styles.grid}>
             <View style={styles.gridHalf}>
               <Card>
-                <SectionHeader icon="security" title="Exam integrity" subtitle="From the proctoring checks on every test" />
+                <SectionHeader icon="security" title="Assessments integrity" subtitle="From the proctoring checks on every test" />
                 <Tiles
                   items={[
                     { label: 'Flagged tests', value: fmtNum(ent.integrity.flaggedSubmissions), tone: colors.primary },
