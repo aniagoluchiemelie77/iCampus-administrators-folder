@@ -1,13 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, FlatList, Image, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
-import { searchAcademicResources, searchCourses, searchPosts, searchStore, searchUsers } from '../api';
-import { errorMessage, useSession, useToast } from '../context';
+import { adminSearchUsers, searchAcademicResources, searchCourses, searchPosts, searchStore } from '../api';
+import { errorMessage, useNavigation, useSession, useToast } from '../context';
 import { Icon, IconName } from '../icons';
 import { openInApp } from '../links';
 import { MediaCarousel } from '../MediaCarousel';
 import { makeStyles, useColors } from '../theme';
 import { EmptyState, formatDate, fromNow, noOutline, PageHeader, Pill, TabStrip, UserAvatar, UserIdentity } from '../ui';
-import { EditUserSheet } from './EditUser';
 
 type SearchTab = 'people' | 'posts' | 'market' | 'resources' | 'courses';
 type Result = Record<string, any>;
@@ -42,11 +41,14 @@ function PersonRow({ item, onPress }: { item: Result; onPress: () => void }) {
           isOrganization={item.usertype === 'enterprise'}
           organizationName={item.organizationName}
         />
-        <Text numberOfLines={1} style={styles.meta}>{item.email || item.uid}</Text>
+        <Text numberOfLines={1} style={styles.meta}>
+          {[item.email, item.idNumber, item.department].filter(Boolean).join(' · ') || item.uid}
+        </Text>
+        <Text numberOfLines={1} selectable style={styles.uid}>{item.uid}</Text>
       </View>
       {item.isSuspended ? <Pill label="SUSPENDED" icon="block" color={colors.criticalSeverity} /> : null}
       <View style={styles.trailing}>
-        <Icon name="edit" size={18} color={colors.primary} />
+        <Icon name="chevron-right" size={20} color={colors.primary} />
       </View>
     </Pressable>
   );
@@ -186,7 +188,7 @@ export function AdminSearch() {
   const [tab, setTab] = useState<SearchTab>('people');
   const [results, setResults] = useState<Result[]>([]);
   const [searching, setSearching] = useState(false);
-  const [editing, setEditing] = useState<Result | null>(null);
+  const { push } = useNavigation();
   const columns = tab === 'market' ? (width >= 700 ? 3 : 2) : 1;
   const tabLabel = TABS.find(item => item.id === tab)?.label ?? '';
 
@@ -201,8 +203,8 @@ export function AdminSearch() {
       setSearching(true);
       try {
         const search = {
-          // The app sent the administrator's role as the viewer tier.
-          people: (q: string) => searchUsers(q, admin.adminType || 'free'),
+          // Scoped on the server: school reps only find their own school (or department).
+          people: async (q: string) => (await adminSearchUsers(q)).results,
           posts: searchPosts,
           market: searchStore,
           resources: searchAcademicResources,
@@ -228,7 +230,7 @@ export function AdminSearch() {
   const renderItem = ({ item }: { item: Result }) => {
     switch (tab) {
       case 'people':
-        return <PersonRow item={item} onPress={() => setEditing(item)} />;
+        return <PersonRow item={item} onPress={() => push({ name: 'userProfile', uid: item.uid })} />;
       case 'posts':
         return <PostRow item={item} />;
       case 'market':
@@ -255,7 +257,7 @@ export function AdminSearch() {
             onChangeText={setQuery}
             onFocus={() => setFocused(true)}
             onBlur={() => setFocused(false)}
-            placeholder={`Search ${tabLabel.toLowerCase()}...`}
+            placeholder={tab === 'people' ? 'Search people by name, username, email, ID number or user ID...' : `Search ${tabLabel.toLowerCase()}...`}
             placeholderTextColor={colors.inputTextHolder}
             style={styles.searchInput}
             value={query}
@@ -308,14 +310,6 @@ export function AdminSearch() {
           />
         )}
       </View>
-      <EditUserSheet
-        user={editing}
-        onClose={() => setEditing(null)}
-        onUpdated={updated => {
-          setResults(previous => previous.map(item => (item.uid === updated.uid ? { ...item, ...updated } : item)));
-          setEditing(null);
-        }}
-      />
     </View>
   );
 }
@@ -367,6 +361,7 @@ const useStyles = makeStyles(c =>
     statText: { fontSize: 13, fontWeight: '700', color: c.text },
     title: { fontSize: 15, fontWeight: '700', color: c.textDarker },
     meta: { fontSize: 12.5, color: c.textMuted, marginTop: 2 },
+    uid: { fontSize: 11, color: c.textMuted, opacity: 0.8, marginTop: 1, fontFamily: 'monospace' },
     product: {
       flex: 1,
       borderRadius: 20,

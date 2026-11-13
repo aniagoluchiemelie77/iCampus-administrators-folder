@@ -106,7 +106,9 @@ export type Route =
   | { name: 'financeSection'; section: FinanceSectionId; status?: string; year?: number; period?: number | 'all' }
   | { name: 'adminDetail'; uid: string }
   | { name: 'adminActivity'; actorUid?: string; title?: string }
-  | { name: 'messageAdmins'; uids?: string[]; label?: string };
+  | { name: 'messageAdmins'; uids?: string[]; label?: string }
+  | { name: 'courseDetail'; courseId: string }
+  | { name: 'userProfile'; uid: string };
 
 type Session = { admin: AdminUser; logout: () => void };
 type Navigation = {

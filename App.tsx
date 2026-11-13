@@ -22,7 +22,9 @@ import { AcademicCalendarScreen } from './src/screens/AcademicCalendar';
 import { ActivityLogs } from './src/screens/ActivityLogs';
 import { AdminActivityScreen, AdminDetail, MessageAdmins, StaffAccessControl } from './src/screens/AccessControl';
 import { FinanceOverview, FinanceSection, SchoolBillingTab } from './src/screens/Finance';
+import { CourseDetailScreen } from './src/screens/CourseDetail';
 import { SchoolUsers } from './src/screens/SchoolUsers';
+import { UserProfileScreen } from './src/screens/UserProfile';
 import { SocialOverview } from './src/screens/Social';
 import { StaffNotifications } from './src/screens/StaffNotifications';
 import { AdminForm } from './src/screens/Admins';
@@ -134,6 +136,10 @@ function RouteContent({ route }: { route: Route }) {
       return <AdminActivityScreen actorUid={route.actorUid} title={route.title} />;
     case 'messageAdmins':
       return <MessageAdmins uids={route.uids} label={route.label} />;
+    case 'courseDetail':
+      return <CourseDetailScreen key={route.courseId} courseId={route.courseId} />;
+    case 'userProfile':
+      return <UserProfileScreen key={route.uid} uid={route.uid} />;
   }
 }
 

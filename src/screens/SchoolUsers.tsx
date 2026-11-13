@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
-import { exportSchoolData, getSchoolUsers, LIST_PAGE_SIZE, SchoolUsersResult } from '../api';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { exportSchoolData, getSchoolSection, getSchoolUsers, LIST_PAGE_SIZE, Page, SchoolUsersResult } from '../api';
 import { BarChart, StackedBarChart } from '../charts';
 import { Cell, ExportButton, Grid, StatCard, StatRow } from '../dashboard';
-import { errorMessage, isSchoolAdminA, useSession, useToast } from '../context';
+import { errorMessage, isSchoolAdminA, useNavigation, useSession, useToast } from '../context';
 import { Icon } from '../icons';
 import { makeStyles, useColors } from '../theme';
 import {
@@ -24,6 +24,138 @@ import {
 } from '../ui';
 
 type Role = 'students' | 'lecturers';
+type UsersView = Role | 'courses';
+
+function Pager({ page, totalPages, total, loading, onPage }: { page: number; totalPages: number; total: number; loading: boolean; onPage: (page: number) => void }) {
+  const styles = useStyles();
+  if (totalPages <= 1) return null;
+  // The server sends one batch of LIST_PAGE_SIZE at a time, never the whole school.
+  return (
+    <View style={styles.pager}>
+      <IconButton filled icon="first-page" label="First page" onPress={() => onPage(1)} disabled={page <= 1 || loading} />
+      <Button compact variant="outline" icon="chevron-left" title="Previous" disabled={page <= 1 || loading} onPress={() => onPage(page - 1)} />
+      <View style={styles.pagerText}>
+        <Text style={styles.name}>
+          {formatCount((page - 1) * LIST_PAGE_SIZE + 1)}–{formatCount(Math.min(total, page * LIST_PAGE_SIZE))} of {formatCount(total)}
+        </Text>
+        <Text style={styles.meta}>
+          Page {page} of {totalPages}
+        </Text>
+      </View>
+      <Button compact variant="outline" icon="chevron-right" title="Next" disabled={page >= totalPages || loading} onPress={() => onPage(page + 1)} />
+      <IconButton filled icon="last-page" label="Last page" onPress={() => onPage(totalPages)} disabled={page >= totalPages || loading} />
+    </View>
+  );
+}
+
+type CoursesPage = Page<Record<string, any>> & { scope?: { department: string | null; departments: string[] }; session?: { label: string } };
+
+/**
+ * This session's courses, grouped by department. Institution reps can narrow
+ * to one department; department reps only ever get their own (server-side).
+ */
+function SchoolCourses({ canFilter }: { canFilter: boolean }) {
+  const toast = useToast();
+  const colors = useColors();
+  const styles = useStyles();
+  const { push } = useNavigation();
+  const [department, setDepartment] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const [data, setData] = useState<CoursesPage | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setData(await getSchoolSection('courses', { department: canFilter ? department : null, q: search, page, sort: 'department' }));
+    } catch (reason) {
+      toast('error', errorMessage(reason), 'Fetch Error');
+    } finally {
+      setLoading(false);
+    }
+  }, [canFilter, department, page, search, toast]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearch(query.trim());
+      setPage(1);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  const departments = data?.scope?.departments ?? [];
+  const items = data?.items ?? [];
+  return (
+    <>
+      {canFilter && departments.length > 0 ? (
+        <FilterChips
+          value={department ?? '__all'}
+          onChange={value => {
+            setDepartment(value === '__all' ? null : value);
+            setPage(1);
+          }}
+          options={[{ value: '__all', label: 'All departments' }, ...departments.map(name => ({ value: name, label: name }))]}
+        />
+      ) : !canFilter ? (
+        <View style={styles.locked}>
+          <Icon name="lock-outline" size={15} color={colors.textMuted} />
+          <Text style={styles.meta}>Showing courses in the {data?.scope?.department ?? 'your'} department only.</Text>
+        </View>
+      ) : null}
+      <Field icon="search" placeholder="Search by course code, title or lecturer" value={query} onChangeText={setQuery} />
+      {data?.session?.label ? (
+        <Text style={[styles.meta, styles.sessionNote]}>
+          {formatCount(data.total)} {data.total === 1 ? 'course' : 'courses'} in the {data.session.label} session
+        </Text>
+      ) : null}
+      {!data ? (
+        <Loading />
+      ) : items.length === 0 ? (
+        <EmptyState icon="menu-book" title="No courses" subtitle={search ? `No results for "${search}".` : 'No courses for this session yet.'} />
+      ) : (
+        <View style={loading ? styles.dim : null}>
+          {items.map((course, index) => {
+            const newGroup = index === 0 || items[index - 1].department !== course.department;
+            return (
+              <React.Fragment key={course.courseId ?? index}>
+                {newGroup ? <Text style={styles.groupHeading}>{course.department}</Text> : null}
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Open ${course.courseCode} ${course.courseTitle}`}
+                  onPress={() => push({ name: 'courseDetail', courseId: course.courseId })}
+                  style={({ hovered }: any) => [styles.row, hovered && styles.hover]}
+                >
+                  <View style={styles.codeBadge}>
+                    <Text numberOfLines={1} style={styles.codeText}>{String(course.courseCode || '?').slice(0, 9)}</Text>
+                  </View>
+                  <View style={styles.flex}>
+                    <Text numberOfLines={1} style={styles.name}>{course.courseTitle || 'Untitled course'}</Text>
+                    <Text numberOfLines={1} style={styles.meta}>
+                      {[course.level ? `${course.level}L` : null, course.semester ? `${course.semester} semester` : null].filter(Boolean).join(' · ') || 'Level not set'}
+                    </Text>
+                    <Text numberOfLines={1} style={styles.meta}>{course.lecturers?.length ? course.lecturers.join(', ') : 'No lecturer assigned'}</Text>
+                  </View>
+                  <View style={styles.stat}>
+                    <Text style={styles.name}>{formatCount(course.enrolled)}</Text>
+                    <Text style={styles.meta}>enrolled · {course.lecturesHeld} held</Text>
+                  </View>
+                  <Icon name="chevron-right" size={20} color={colors.textMuted} />
+                </Pressable>
+              </React.Fragment>
+            );
+          })}
+        </View>
+      )}
+      {data ? <Pager page={data.page} totalPages={data.totalPages} total={data.total} loading={loading} onPage={setPage} /> : null}
+    </>
+  );
+}
 
 /**
  * The school's students and lecturers, grouped by department and level.
@@ -35,7 +167,9 @@ export function SchoolUsers() {
   const toast = useToast();
   const colors = useColors();
   const styles = useStyles();
+  const { push } = useNavigation();
   const canFilter = isSchoolAdminA(admin.adminType);
+  const [view, setView] = useState<UsersView>('students');
   const [role, setRole] = useState<Role>('students');
   const [department, setDepartment] = useState<string | null>(null);
   const [level, setLevel] = useState<string | null>(null);
@@ -120,9 +254,17 @@ export function SchoolUsers() {
       <Card>
         <SectionHeader
           icon="people"
-          title={role === 'students' ? 'Students' : 'Lecturers'}
-          subtitle={`${formatCount(data.total)} ${loading ? '· updating…' : 'matching'}`}
+          title={view === 'courses' ? 'Courses' : role === 'students' ? 'Students' : 'Lecturers'}
+          subtitle={view === 'courses' ? 'This session, by department. Open one for its people and activity.' : `${formatCount(data.total)} ${loading ? '· updating…' : 'matching'}`}
           right={
+            view === 'courses' ? (
+              <ExportButton
+                title="Export courses"
+                scopeNote={scopeLabel}
+                options={[{ value: 'courses', label: 'Courses this session' }]}
+                onExport={() => exportSchoolData({ section: 'courses', department: canFilter ? department : null })}
+              />
+            ) : (
             <ExportButton
               title="Export users"
               scopeNote={`${scopeLabel}${level && role === 'students' ? ` · ${level} level` : ''}`}
@@ -134,20 +276,28 @@ export function SchoolUsers() {
                 exportSchoolData({ section, department: canFilter ? department : null, level: section === 'students' ? level : null })
               }
             />
+            )
           }
         />
         <TabStrip
           tabs={[
             { id: 'students', label: 'Students', icon: 'school', badge: breakdown.totals.students || undefined },
             { id: 'lecturers', label: 'Lecturers', icon: 'co-present', badge: breakdown.totals.lecturers || undefined },
+            { id: 'courses', label: 'Courses', icon: 'menu-book' },
           ]}
-          active={role}
+          active={view}
           onChange={next => {
+            setView(next);
+            if (next === 'courses' || next === role) return;
             setRole(next);
             setLevel(null);
             setPage(1);
           }}
         />
+        {view === 'courses' ? (
+          <SchoolCourses canFilter={canFilter} />
+        ) : (
+        <>
         {canFilter && scope.departments.length > 0 ? (
           <FilterChips
             value={department ?? '__all'}
@@ -176,13 +326,19 @@ export function SchoolUsers() {
             ]}
           />
         ) : null}
-        <Field icon="search" placeholder="Search by name, username or ID" value={query} onChangeText={setQuery} />
+        <Field icon="search" placeholder="Search by name, username, ID number or user ID" value={query} onChangeText={setQuery} />
         {data.items.length === 0 ? (
           <EmptyState icon="person-search" title="No one here" subtitle={search ? `No results for "${search}".` : 'No users match these filters.'} />
         ) : (
           <View style={loading ? styles.dim : null}>
             {data.items.map(user => (
-              <View key={user.uid} style={styles.row}>
+              <Pressable
+                key={user.uid}
+                accessibilityRole="button"
+                accessibilityLabel={`Open ${user.name}`}
+                onPress={() => push({ name: 'userProfile', uid: user.uid })}
+                style={({ hovered }: any) => [styles.row, hovered && styles.hover]}
+              >
                 <UserAvatar profilePic={user.profilePic} firstName={user.name} size={40} />
                 <View style={styles.flex}>
                   <View style={styles.nameRow}>
@@ -197,27 +353,14 @@ export function SchoolUsers() {
                   </Text>
                 </View>
                 {user.joinedAt ? <Text style={styles.meta}>Joined {fromNow(user.joinedAt)}</Text> : null}
-              </View>
+                <Icon name="chevron-right" size={20} color={colors.textMuted} />
+              </Pressable>
             ))}
           </View>
         )}
-        {data.totalPages > 1 ? (
-          // The server sends one batch of LIST_PAGE_SIZE at a time, never the whole school.
-          <View style={styles.pager}>
-            <IconButton filled icon="first-page" label="First page" onPress={() => setPage(1)} disabled={page <= 1 || loading} />
-            <Button compact variant="outline" icon="chevron-left" title="Previous" disabled={page <= 1 || loading} onPress={() => setPage(page - 1)} />
-            <View style={styles.pagerText}>
-              <Text style={styles.name}>
-                {formatCount((data.page - 1) * LIST_PAGE_SIZE + 1)}–{formatCount(Math.min(data.total, data.page * LIST_PAGE_SIZE))} of {formatCount(data.total)}
-              </Text>
-              <Text style={styles.meta}>
-                Page {data.page} of {data.totalPages}
-              </Text>
-            </View>
-            <Button compact variant="outline" icon="chevron-right" title="Next" disabled={page >= data.totalPages || loading} onPress={() => setPage(page + 1)} />
-            <IconButton filled icon="last-page" label="Last page" onPress={() => setPage(data.totalPages)} disabled={page >= data.totalPages || loading} />
-          </View>
-        ) : null}
+        <Pager page={data.page} totalPages={data.totalPages} total={data.total} loading={loading} onPage={setPage} />
+        </>
+        )}
       </Card>
     </ScrollPage>
   );
@@ -235,5 +378,11 @@ const useStyles = makeStyles(c =>
     name: { flexShrink: 1, fontSize: 14, fontWeight: '700', color: c.textDarker },
     pager: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', gap: 10, marginTop: 16 },
     pagerText: { alignItems: 'center', minWidth: 130, paddingHorizontal: 6 },
+    hover: { backgroundColor: c.primary + '08' },
+    stat: { alignItems: 'flex-end', gap: 2 },
+    sessionNote: { marginBottom: 4 },
+    groupHeading: { fontSize: 12, fontWeight: '800', letterSpacing: 0.6, textTransform: 'uppercase', color: c.textMuted, paddingTop: 16, paddingBottom: 4 },
+    codeBadge: { minWidth: 70, paddingVertical: 10, paddingHorizontal: 8, borderRadius: 12, alignItems: 'center', backgroundColor: c.primary },
+    codeText: { color: c.btnTextColor, fontWeight: '900', fontSize: 12, letterSpacing: 0.4 },
   }),
 );

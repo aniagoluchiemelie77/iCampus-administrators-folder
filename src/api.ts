@@ -724,6 +724,143 @@ export const getSchoolUsers = (options: {
 };
 
 // ---------------------------------------------------------------------------
+// Courses (school reps): one course's people, lectures and activity
+// ---------------------------------------------------------------------------
+
+export type CourseTimelineEvent = { kind: string; title: string; detail: string; at: string };
+
+export type CourseDetail = {
+  /** Test scores are part of the Professional plan and up. */
+  access: { assessments: boolean };
+  course: {
+    courseId: string;
+    courseCode: string;
+    courseTitle: string;
+    department: string;
+    level: string | null;
+    semester: string | null;
+    session: string | null;
+    credits: number | null;
+    description: string | null;
+    isActive: boolean;
+    contents: string[];
+  };
+  summary: {
+    enrolled: number;
+    lecturers: number;
+    lecturesScheduled: number;
+    lecturesHeld: number;
+    lecturesCancelled: number;
+    attendanceRatePct: number | null;
+    materials: number;
+    assignments: number;
+    exceptionsPending: number;
+    exceptionsApproved: number;
+    assessments?: number;
+    submissions?: number;
+    averageScorePct?: number | null;
+  };
+  lecturers: Array<{ uid: string; name: string; staffId: string | null; department: string | null; profilePic: string[] | string; isVerified: boolean; lecturesHeld: number }>;
+  students: Array<{
+    uid: string;
+    name: string;
+    matricNumber: string | null;
+    department: string | null;
+    level: string | null;
+    profilePic: string[] | string;
+    isSuspended: boolean;
+    lecturesAttended: number;
+    attendancePct: number | null;
+    averageScorePct?: number | null;
+    testsTaken?: number;
+  }>;
+  lectures: Array<{ id: string; topicName: string; host: string; lectureType: string; location: string | null; status: string; startsAt: string | null; endsAt: string | null; checkIns: number }>;
+  assessments: Array<{ id: string; title: string; totalMarks: number; isPublished: boolean; dueDate: string | null; createdAt: string | null; submissions: number; averageScorePct: number | null; flagged: number }>;
+  materials: Array<{ title: string; uploadedAt: string | null }>;
+  assignments: Array<{ title: string; dueDate: string | null; submissions: number }>;
+  timeline: CourseTimelineEvent[];
+};
+
+export const getSchoolCourseDetail = (courseId: string) =>
+  request<CourseDetail>(`admins/school/courses/${encodeURIComponent(courseId)}`);
+
+// ---------------------------------------------------------------------------
+// User lookup (every admin role; the server decides scope and edit rights)
+// ---------------------------------------------------------------------------
+
+export type UserSearchRow = {
+  uid: string;
+  firstname: string;
+  lastname: string;
+  username: string;
+  usertype: string | null;
+  tier: string | null;
+  isVerified: boolean;
+  isSuspended: boolean;
+  profilePic: string[] | string;
+  organizationName: string;
+  department: string | null;
+  idNumber: string | null;
+  /** Staff only; school reps don't get contact details. */
+  email?: string | null;
+  schoolName?: string | null;
+};
+
+export const adminSearchUsers = (q: string) =>
+  request<{ results: UserSearchRow[]; total: number; exactUid: string | null }>(
+    `admins/users/search?${new URLSearchParams({ q })}`,
+  );
+
+export type ProfileSection = 'academics' | 'posts' | 'store' | 'transactions' | 'tickets' | 'security' | 'notifications';
+export type Feed<T> = { data?: T; error?: string };
+
+export type AcademicTimelineEvent = { kind: string; title: string; course: string; detail: string; at: string };
+export type AcademicCourse = {
+  courseId: string;
+  courseCode: string;
+  courseTitle: string;
+  department: string;
+  level: string | null;
+  semester: string | null;
+  session: string | null;
+  enrolled: number;
+  lecturesHeld: number;
+  lecturesAttended?: number;
+  attendancePct?: number | null;
+  averageScorePct?: number | null;
+  hostedByUser?: number;
+};
+
+export type UserProfile = {
+  access: { canEdit: boolean; canDelete: boolean; sections: ProfileSection[] };
+  user: Record<string, any>;
+  activity: {
+    academics?: Feed<{ role: 'student' | 'lecturer'; courses: AcademicCourse[]; summary: Record<string, number | null>; timeline: AcademicTimelineEvent[] }>;
+    posts?: Feed<{ total: number | null; items: Array<Record<string, any>> }>;
+    store?: Feed<{ orders: Array<Record<string, any>>; products: Array<Record<string, any>> }>;
+    transactions?: Feed<Array<Record<string, any>>>;
+    tickets?: Feed<Array<Record<string, any>>>;
+    security?: Feed<{
+      twoFactorEnabled: boolean;
+      sessions: Array<{ deviceName: string; location: string | null; ipAddress: string | null; lastUsed: string | null }>;
+      suspiciousActivity: Array<{ type: string; at: string | null; detail: string | null }>;
+      recoveryEmails: Array<{ email: string; isVerified: boolean }>;
+      phoneNumbers: Array<{ number: string; isVerified: boolean }>;
+    }>;
+    notifications?: Feed<Array<Record<string, any>>>;
+  };
+};
+
+export const getUserProfile = (uid: string) => request<UserProfile>(`admins/users/${encodeURIComponent(uid)}/profile`);
+
+export const deleteUserAccount = (uid: string, body: { reason: string; confirm: string }) =>
+  request<{ success: boolean; message: string }>(`admins/users/${encodeURIComponent(uid)}`, {
+    method: 'DELETE',
+    headers: { 'X-Idempotency-Key': idempotencyKey() },
+    body: JSON.stringify(body),
+  });
+
+// ---------------------------------------------------------------------------
 // Finance
 // ---------------------------------------------------------------------------
 
