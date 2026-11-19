@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, StyleSheet } from 'react-native';
 import { io } from 'socket.io-client';
-import { backendUrl, getNotifications, NOTIFICATIONS_PAGE_SIZE } from '../api';
+import { backendUrl, getNotifications, NOTIFICATIONS_PAGE_SIZE, refreshSocketSession, socketAuth } from '../api';
 import { errorMessage, useSession, useToast } from '../context';
 import { NotificationItem } from '../NotificationItem';
 import { EmptyState, Loading } from '../ui';
@@ -51,7 +51,14 @@ export function ActivityLogs({ category, label }: { category: string; label: str
   useEffect(() => {
     let socket: ReturnType<typeof io> | null = null;
     try {
-      socket = io(backendUrl(), { transports: ['websocket'], query: { userId: admin.uid } });
+      // Authenticated handshake; the server joins this admin's own room.
+      socket = io(backendUrl(), { transports: ['websocket'], auth: socketAuth });
+      let retried = false;
+      socket.on('connect_error', async error => {
+        if (error?.message !== 'unauthorized' || retried) return;
+        retried = true;
+        if (await refreshSocketSession()) socket?.connect();
+      });
       socket.on('new_notification', (log: Record<string, any>) => {
         if (log?.category === category) setLogs(previous => [log, ...previous]);
       });

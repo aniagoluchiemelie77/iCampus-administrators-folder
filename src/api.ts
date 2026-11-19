@@ -70,6 +70,26 @@ export const writeSession = (session: AdminSession) => {
 
 export const SESSION_EXPIRED_EVENT = 'icampus-admin-session-expired';
 
+/**
+ * Socket.IO `auth` option: the server rejects handshakes without a valid
+ * access token. Called on every (re)connect so a refreshed token is used.
+ */
+export const socketAuth = (cb: (data: object) => void) => {
+  cb({ token: readSession()?.accessToken ?? null });
+};
+
+/** After an "unauthorized" handshake error: refresh once, then reconnect. */
+export const refreshSocketSession = async () => {
+  const session = readSession();
+  if (!session) return false;
+  const refreshed = await refreshAccessToken(session).catch(() => null);
+  if (!refreshed) {
+    expireSession();
+    return false;
+  }
+  return true;
+};
+
 export const clearSession = () => {
   if (typeof localStorage !== 'undefined') localStorage.removeItem(SESSION_KEY);
 };
@@ -648,19 +668,36 @@ export const deleteAdmin = (uid: string) =>
     headers: { 'X-Idempotency-Key': idempotencyKey() },
   });
 
-/** Unsigned Cloudinary upload, as the iCampus app does for chat attachments. */
+/**
+ * Signed Cloudinary upload. The backend returns a short-lived signature that
+ * fixes the folder, file name and allowed formats, so no upload preset or
+ * key in this bundle can be reused to upload anything else.
+ */
 export const uploadAttachment = async (file: File) => {
-  const cloudName = process.env.EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME?.trim();
-  const uploadPreset = process.env.EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET?.trim();
-  if (!cloudName || !uploadPreset) {
-    throw new Error('Set the EXPO_PUBLIC_CLOUDINARY_* values in your .env file to send attachments.');
-  }
+  const sig = await request<{
+    cloudName: string;
+    apiKey: string;
+    signature: string;
+    timestamp: number;
+    folder: string;
+    public_id: string;
+    allowed_formats: string;
+    upload_preset?: string;
+  }>('v1/secure/uploads/cloudinary-signature', {
+    method: 'POST',
+    body: JSON.stringify({ folder: 'chat-attachments', resourceType: 'auto' }),
+  });
   const form = new FormData();
   form.append('file', file);
-  form.append('upload_preset', uploadPreset);
-  form.append('folder', 'chat-attachments');
+  form.append('api_key', sig.apiKey);
+  form.append('timestamp', String(sig.timestamp));
+  form.append('signature', sig.signature);
+  form.append('folder', sig.folder);
+  form.append('public_id', sig.public_id);
+  form.append('allowed_formats', sig.allowed_formats);
+  if (sig.upload_preset) form.append('upload_preset', sig.upload_preset);
   const response = await fetch(
-    `https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`,
+    `https://api.cloudinary.com/v1_1/${sig.cloudName}/auto/upload`,
     { method: 'POST', body: form },
   );
   const result = await json(response);
